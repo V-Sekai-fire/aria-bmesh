@@ -28,8 +28,6 @@ defmodule AriaBmeshDomain.Primitives do
 
   """
 
-  use AriaCore
-
   @type primitive_params :: map()
 
   @doc """
