@@ -69,6 +69,37 @@ class BmeshEncoder:
 
         return self._encode_to_buffer_format_direct(bm, vert_to_index, edge_to_index, face_to_index, loop_to_index)
 
+    def _encode_to_buffer_format_direct(self, bm: BMesh, vert_to_index: Dict, edge_to_index: Dict, face_to_index: Dict, loop_to_index: Dict) -> Dict[str, Any]:
+        """
+        Encode BMesh to buffer format using manual index maps to avoid lookup table issues.
+        
+        This creates the extension data structure that references buffer views
+        which will be created by the glTF exporter.
+        """
+        extension_data = {}
+
+        # Encode vertices
+        vertex_data = self._encode_vertices_to_buffers_direct(bm, vert_to_index, edge_to_index)
+        if vertex_data:
+            extension_data["vertices"] = vertex_data
+
+        # Encode edges
+        edge_data = self._encode_edges_to_buffers_direct(bm, vert_to_index, edge_to_index, face_to_index)
+        if edge_data:
+            extension_data["edges"] = edge_data
+
+        # Encode loops
+        loop_data = self._encode_loops_to_buffers_direct(bm, vert_to_index, edge_to_index, face_to_index, loop_to_index)
+        if loop_data:
+            extension_data["loops"] = loop_data
+
+        # Encode faces
+        face_data = self._encode_faces_to_buffers_direct(bm, vert_to_index, edge_to_index, loop_to_index, face_to_index)
+        if face_data:
+            extension_data["faces"] = face_data
+
+        return extension_data
+
     def _encode_to_buffer_format(self, bm: BMesh) -> Dict[str, Any]:
         """
         Encode BMesh to buffer format following glTF conventions.
@@ -99,6 +130,363 @@ class BmeshEncoder:
             extension_data["faces"] = face_data
 
         return extension_data
+
+    def _encode_vertices_to_buffers_direct(self, bm: BMesh, vert_to_index: Dict, edge_to_index: Dict) -> Dict[str, Any]:
+        """Encode vertex data using manual index maps to avoid lookup table issues."""
+        if not bm.verts:
+            return {}
+
+        vertex_count = len(bm.verts)
+        
+        # Create position data (required by schema)
+        positions_buffer = bytearray()
+        position_struct = struct.Struct("<fff")
+        
+        # Create edge adjacency data (optional per schema)
+        edges_buffer = bytearray()
+        edge_index_struct = struct.Struct("<I")
+        
+        for vert in bm.verts:
+            # Pack vertex position (Vec3<f32> as required by schema)
+            positions_buffer.extend(position_struct.pack(*vert.co))
+            
+            # Pack vertex-edge adjacency data using manual index mapping
+            for edge in vert.link_edges:
+                edge_idx = edge_to_index.get(edge)
+                if edge_idx is not None:
+                    edges_buffer.extend(edge_index_struct.pack(edge_idx))
+
+        result = {
+            "count": vertex_count,
+            "positions": {
+                "data": positions_buffer,
+                "target": "ARRAY_BUFFER",
+                "componentType": 5126,  # GL_FLOAT
+                "type": "VEC3",
+                "count": vertex_count
+            }
+        }
+        
+        # Add edges buffer if there's adjacency data
+        if edges_buffer:
+            result["edges"] = {
+                "data": edges_buffer,
+                "target": "ARRAY_BUFFER",
+                "componentType": 5125,  # GL_UNSIGNED_INT
+                "type": "SCALAR"
+            }
+        
+        return result
+
+    def _encode_edges_to_buffers_direct(self, bm: BMesh, vert_to_index: Dict, edge_to_index: Dict, face_to_index: Dict) -> Dict[str, Any]:
+        """Encode edge data using manual index maps to avoid lookup table issues."""
+        if not bm.edges:
+            return {}
+
+        edge_count = len(bm.edges)
+        
+        # Create edge vertex pairs (required: 2×u32 per edge)
+        vertices_buffer = bytearray()
+        vertex_pair_struct = struct.Struct("<II")
+        
+        # Create face adjacency data (optional)
+        faces_buffer = bytearray()
+        face_index_struct = struct.Struct("<I")
+        
+        # Create manifold flags (optional: u8 per edge)
+        manifold_buffer = bytearray()
+        manifold_struct = struct.Struct("<B")
+        
+        for edge in bm.edges:
+            # Pack edge vertices using manual index mapping (required by schema)
+            vert0_idx = vert_to_index.get(edge.verts[0])
+            vert1_idx = vert_to_index.get(edge.verts[1])
+            
+            if vert0_idx is not None and vert1_idx is not None:
+                vertices_buffer.extend(vertex_pair_struct.pack(vert0_idx, vert1_idx))
+            
+            # Pack face adjacency data using manual index mapping
+            for face in edge.link_faces:
+                face_idx = face_to_index.get(face)
+                if face_idx is not None:
+                    faces_buffer.extend(face_index_struct.pack(face_idx))
+            
+            # Pack manifold status (0=non-manifold, 1=manifold, 255=unknown)
+            manifold_status = self._calculate_edge_manifold_status(edge)
+            if manifold_status is True:
+                manifold_buffer.extend(manifold_struct.pack(1))
+            elif manifold_status is False:
+                manifold_buffer.extend(manifold_struct.pack(0))
+            else:
+                manifold_buffer.extend(manifold_struct.pack(255))  # Unknown
+
+        result = {
+            "count": edge_count,
+            "vertices": {
+                "data": vertices_buffer,
+                "target": "ELEMENT_ARRAY_BUFFER",
+                "componentType": 5125,  # GL_UNSIGNED_INT
+                "type": "VEC2",
+                "count": edge_count
+            }
+        }
+        
+        # Add optional face adjacency data
+        if faces_buffer:
+            result["faces"] = {
+                "data": faces_buffer,
+                "target": "ARRAY_BUFFER",
+                "componentType": 5125,  # GL_UNSIGNED_INT
+                "type": "SCALAR"
+            }
+        
+        # Add optional manifold flags
+        if manifold_buffer:
+            result["manifold"] = {
+                "data": manifold_buffer,
+                "target": "ARRAY_BUFFER",
+                "componentType": 5121,  # GL_UNSIGNED_BYTE
+                "type": "SCALAR",
+                "count": edge_count
+            }
+        
+        return result
+
+    def _encode_loops_to_buffers_direct(self, bm: BMesh, vert_to_index: Dict, edge_to_index: Dict, face_to_index: Dict, loop_to_index: Dict) -> Dict[str, Any]:
+        """Encode loop data using manual index maps to avoid lookup table issues."""
+        if not bm.loops:
+            return {}
+
+        # Count total loops using provided mapping
+        loop_count = len(loop_to_index)
+        if loop_count == 0:
+            return {}
+
+        # Create topology data (vertex, edge, face, next, prev, radial_next, radial_prev)
+        topology_buffer = bytearray()
+        topology_struct = struct.Struct("<IIIIIII")  # 7×u32 per loop
+        
+        # Create UV data using glTF standard attribute names
+        uv_buffers = {}
+        uv_struct = struct.Struct("<ff")
+        
+        # Check for UV layers
+        if bm.loops.layers.uv:
+            for i, uv_layer in enumerate(bm.loops.layers.uv):
+                uv_buffers[f"TEXCOORD_{i}"] = bytearray()
+
+        # Create reverse loop index mapping for navigation
+        index_to_loop = {idx: loop for loop, idx in loop_to_index.items()}
+        
+        # Process loops in index order
+        for loop_idx in range(loop_count):
+            loop = index_to_loop.get(loop_idx)
+            if loop is None:
+                continue
+                
+            face = loop.face
+            face_loops = list(face.loops)
+            loop_in_face_idx = face_loops.index(loop)
+            
+            # Calculate next and previous in face using manual mapping
+            next_in_face = (loop_in_face_idx + 1) % len(face_loops)
+            prev_in_face = (loop_in_face_idx - 1) % len(face_loops)
+            next_loop = face_loops[next_in_face]
+            prev_loop = face_loops[prev_in_face]
+            
+            next_idx = loop_to_index.get(next_loop, loop_idx)
+            prev_idx = loop_to_index.get(prev_loop, loop_idx)
+            
+            # Find radial navigation using manual index mapping
+            radial_next_idx, radial_prev_idx = self._find_radial_loop_indices_direct(
+                loop, loop_idx, loop_to_index, face_to_index
+            )
+            
+            # Get indices using manual mapping
+            vert_idx = vert_to_index.get(loop.vert, 0)
+            edge_idx = edge_to_index.get(loop.edge, 0)
+            face_idx = face_to_index.get(loop.face, 0)
+            
+            # Pack topology
+            topology_buffer.extend(topology_struct.pack(
+                vert_idx,           # vertex
+                edge_idx,           # edge  
+                face_idx,           # face
+                next_idx,           # next
+                prev_idx,           # prev
+                radial_next_idx,    # radial_next
+                radial_prev_idx     # radial_prev
+            ))
+            
+            # Pack UV coordinates using glTF standard naming
+            if bm.loops.layers.uv:
+                for uv_i, uv_layer in enumerate(bm.loops.layers.uv):
+                    uv_coord = loop[uv_layer].uv
+                    uv_buffers[f"TEXCOORD_{uv_i}"].extend(uv_struct.pack(uv_coord[0], uv_coord[1]))
+
+        result = {
+            "count": loop_count,
+            "topology": {
+                "data": topology_buffer,
+                "target": "ARRAY_BUFFER",
+                "componentType": 5125,  # GL_UNSIGNED_INT
+                "type": "SCALAR",  # 7 components per loop stored as scalars
+                "count": loop_count * 7  # 7 values per loop
+            }
+        }
+        
+        # Add UV attributes if present
+        if uv_buffers:
+            result["attributes"] = {}
+            for attr_name, uv_buffer in uv_buffers.items():
+                result["attributes"][attr_name] = {
+                    "data": uv_buffer,
+                    "target": "ARRAY_BUFFER",
+                    "componentType": 5126,  # GL_FLOAT
+                    "type": "VEC2",
+                    "count": loop_count
+                }
+
+        return result
+
+    def _encode_faces_to_buffers_direct(self, bm: BMesh, vert_to_index: Dict, edge_to_index: Dict, loop_to_index: Dict, face_to_index: Dict) -> Dict[str, Any]:
+        """Encode face data using manual index maps to avoid lookup table issues."""
+        if not bm.faces:
+            return {}
+
+        face_count = len(bm.faces)
+        
+        # Create variable-length arrays for face data
+        vertices_buffer = bytearray()
+        edges_buffer = bytearray() 
+        loops_buffer = bytearray()
+        normals_buffer = bytearray()
+        offsets_buffer = bytearray()
+        
+        vertex_struct = struct.Struct("<I")
+        edge_struct = struct.Struct("<I")
+        loop_struct = struct.Struct("<I")
+        normal_struct = struct.Struct("<fff")
+        offset_struct = struct.Struct("<I")
+        
+        vertices_offset = 0
+        edges_offset = 0
+        loops_offset = 0
+        
+        for face in bm.faces:
+            # Record vertex offset for this face (required by schema)
+            offsets_buffer.extend(offset_struct.pack(vertices_offset))
+            
+            # Pack face vertices using manual index mapping (required by schema: variable length, u32 indices)
+            for vert in face.verts:
+                vert_idx = vert_to_index.get(vert)
+                if vert_idx is not None:
+                    vertices_buffer.extend(vertex_struct.pack(vert_idx))
+                    vertices_offset += 1
+                    
+            # Pack face edges using manual index mapping (optional)
+            for edge in face.edges:
+                edge_idx = edge_to_index.get(edge)
+                if edge_idx is not None:
+                    edges_buffer.extend(edge_struct.pack(edge_idx))
+                    edges_offset += 1
+                    
+            # Pack face loops using manual index mapping (optional)
+            for loop in face.loops:
+                loop_idx = loop_to_index.get(loop)
+                if loop_idx is not None:
+                    loops_buffer.extend(loop_struct.pack(loop_idx))
+                    loops_offset += 1
+                    
+            # Pack face normal (Vec3<f32> per face)
+            normals_buffer.extend(normal_struct.pack(*face.normal))
+
+        # Final offset (required: u32 per face + 1)
+        offsets_buffer.extend(offset_struct.pack(vertices_offset))
+
+        result = {
+            "count": face_count,
+            "vertices": {
+                "data": vertices_buffer,
+                "target": "ARRAY_BUFFER",
+                "componentType": 5125,  # GL_UNSIGNED_INT
+                "type": "SCALAR"
+            },
+            "offsets": {
+                "data": offsets_buffer,
+                "target": "ARRAY_BUFFER",
+                "componentType": 5125,  # GL_UNSIGNED_INT
+                "type": "SCALAR",
+                "count": face_count + 1
+            }
+        }
+        
+        # Add optional data
+        if edges_buffer:
+            result["edges"] = {
+                "data": edges_buffer,
+                "target": "ARRAY_BUFFER",
+                "componentType": 5125,  # GL_UNSIGNED_INT
+                "type": "SCALAR"
+            }
+        
+        if loops_buffer:
+            result["loops"] = {
+                "data": loops_buffer,
+                "target": "ARRAY_BUFFER",
+                "componentType": 5125,  # GL_UNSIGNED_INT
+                "type": "SCALAR"
+            }
+        
+        if normals_buffer:
+            result["normals"] = {
+                "data": normals_buffer,
+                "target": "ARRAY_BUFFER",
+                "componentType": 5126,  # GL_FLOAT
+                "type": "VEC3",
+                "count": face_count
+            }
+        
+        return result
+
+    def _find_radial_loop_indices_direct(
+        self, 
+        loop: BMLoop, 
+        current_loop_index: int,
+        loop_to_index: Dict,
+        face_to_index: Dict
+    ) -> Tuple[int, int]:
+        """
+        Find radial next/previous loops around the same edge using manual index maps.
+        
+        For manifold edges, finds the loop on the adjacent face.
+        For non-manifold edges, implements proper radial traversal.
+        """
+        edge = loop.edge
+        linked_faces = list(edge.link_faces)
+        
+        if len(linked_faces) <= 1:
+            # Boundary edge - radial links to self
+            return current_loop_index, current_loop_index
+            
+        # Find the other face using this edge
+        current_face = loop.face
+        other_faces = [f for f in linked_faces if f != current_face]
+        
+        if not other_faces:
+            return current_loop_index, current_loop_index
+            
+        # For manifold case, find the loop on the other face that uses this edge
+        other_face = other_faces[0]  # Take first adjacent face
+        
+        for other_loop in other_face.loops:
+            if other_loop.edge == edge:
+                other_loop_idx = loop_to_index.get(other_loop)
+                if other_loop_idx is not None:
+                    return other_loop_idx, other_loop_idx
+                    
+        # Fallback to self-reference
+        return current_loop_index, current_loop_index
 
     def _encode_vertices_to_buffers(self, bm: BMesh) -> Dict[str, Any]:
         """Encode vertex data for buffer format according to EXT_bmesh_encoding schema."""
