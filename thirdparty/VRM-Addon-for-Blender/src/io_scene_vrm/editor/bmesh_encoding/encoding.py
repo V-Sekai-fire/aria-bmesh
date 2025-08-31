@@ -280,8 +280,8 @@ class BmeshEncoder:
                 "data": topology_buffer,
                 "target": "ARRAY_BUFFER",
                 "componentType": 5125,  # GL_UNSIGNED_INT
-                "type": "VEC3",  # Custom type for 7-component topology
-                "count": loop_count
+                "type": "SCALAR",  # 7 components per loop stored as scalars
+                "count": loop_count * 7  # 7 values per loop
             }
         }
         
@@ -570,6 +570,11 @@ class BmeshEncoder:
                 
             if edges_idx := create_buffer_view(vertex_data.get("edges", {})):
                 result_vertices["edges"] = edges_idx
+            
+            # Add edge offsets buffer view
+            if "edgeOffsets" in vertex_data:
+                if offsets_idx := create_buffer_view(vertex_data["edgeOffsets"]):
+                    result_vertices["edgeOffsets"] = offsets_idx
                 
             result_data["vertices"] = result_vertices
 
@@ -583,6 +588,11 @@ class BmeshEncoder:
                 
             if faces_idx := create_buffer_view(edge_data.get("faces", {})):
                 result_edges["faces"] = faces_idx
+            
+            # Add face offsets buffer view
+            if "faceOffsets" in edge_data:
+                if face_offsets_idx := create_buffer_view(edge_data["faceOffsets"]):
+                    result_edges["faceOffsets"] = face_offsets_idx
                 
             if manifold_idx := create_buffer_view(edge_data.get("manifold", {})):
                 result_edges["manifold"] = manifold_idx
