@@ -183,14 +183,17 @@ class BmeshDecoder:
             # Update the mesh with BMesh data
             bm.to_mesh(mesh)
             
-            # Ensure proper mesh finalization for smooth shading
+            # Enable auto smooth to respect edge smooth flags
+            mesh.use_auto_smooth = True
+            
+            # Ensure proper mesh finalization for smooth shading preservation
             mesh.update()
             mesh.calc_loop_triangles()
             
-            # Force recalculation of normals to respect edge smooth flags
-            mesh.calc_normals_split()
+            # Calculate normals to respect edge smooth flags (use calc_normals instead of calc_normals_split)
+            mesh.calc_normals()
             
-            logger.info("Successfully applied BMesh to Blender mesh with smooth shading preservation")
+            logger.info("Successfully applied BMesh to Blender mesh with surface smoothness preservation")
             return True
             
         except Exception as e:
@@ -394,9 +397,13 @@ class BmeshDecoder:
             smooth_buffer_index = attributes["_SMOOTH"]
             smooth_flags = self._read_buffer_view(parse_result, smooth_buffer_index, 5121, edge_count, "SCALAR")
             if smooth_flags:
-                logger.info(f"Successfully read {len(smooth_flags)} edge smooth flags from buffer")
+                smooth_count = sum(1 for flag in smooth_flags if flag)
+                hard_count = len(smooth_flags) - smooth_count
+                logger.info(f"Successfully read {len(smooth_flags)} edge smooth flags from buffer: {smooth_count} smooth, {hard_count} hard")
             else:
                 logger.warning("Failed to read edge smooth flags from buffer")
+        else:
+            logger.warning("No '_SMOOTH' attribute found in edge data - all edges will default to smooth")
 
         # Create edges
         for i in range(edge_count):
