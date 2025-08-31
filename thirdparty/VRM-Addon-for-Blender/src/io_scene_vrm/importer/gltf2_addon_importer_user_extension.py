@@ -120,9 +120,21 @@ class Gltf2AddonImporterUserExtension:
                             
                             # Convert extension data to dict format
                             extension_dict = self._convert_extension_to_dict(ext_bmesh_data)
+                            logger.info(f"Extension data keys: {list(extension_dict.keys())}")
+                            
+                            # Debug: Log edge data structure
+                            if "edges" in extension_dict:
+                                edge_data = extension_dict["edges"]
+                                logger.info(f"Edge data keys: {list(edge_data.keys())}")
+                                if "attributes" in edge_data:
+                                    logger.info(f"Edge attributes: {list(edge_data['attributes'].keys())}")
+                                else:
+                                    logger.warning("No 'attributes' found in edge data")
+                            else:
+                                logger.warning("No 'edges' found in extension data")
                             
                             # Reconstruct BMesh from extension data
-                            reconstructed_bmesh = bmesh_decoder.decode_gltf_extension_to_bmesh(extension_dict)
+                            reconstructed_bmesh = bmesh_decoder.decode_gltf_extension_to_bmesh(extension_dict, gltf_importer)
                             
                             if reconstructed_bmesh and blender_mesh:
                                 # Apply reconstructed BMesh to Blender mesh
@@ -142,23 +154,52 @@ class Gltf2AddonImporterUserExtension:
     def _convert_extension_to_dict(self, ext_data: object) -> dict:
         """Convert glTF extension object to dictionary format."""
         try:
-            # This is a simplified conversion - in a real implementation,
-            # we'd need to handle the specific data structure from the glTF importer
-            if hasattr(ext_data, '__dict__'):
-                return vars(ext_data)
-            elif isinstance(ext_data, dict):
+            logger.info(f"Converting extension data of type: {type(ext_data)}")
+            
+            # Handle direct dictionary
+            if isinstance(ext_data, dict):
+                logger.info(f"Extension data is already dict with keys: {list(ext_data.keys())}")
                 return ext_data
-            else:
-                # Fallback: try to extract known attributes
-                result = {}
-                for attr in ['vertices', 'edges', 'loops', 'faces']:
-                    value = getattr(ext_data, attr, None)
-                    if value is not None:
-                        if hasattr(value, '__dict__'):
-                            result[attr] = vars(value)
-                        elif isinstance(value, (list, dict)):
-                            result[attr] = value
+            
+            # Handle object with __dict__
+            if hasattr(ext_data, '__dict__'):
+                result = vars(ext_data)
+                logger.info(f"Converted object to dict with keys: {list(result.keys())}")
                 return result
+            
+            # Fallback: try to extract known attributes recursively
+            result = {}
+            for attr in ['vertices', 'edges', 'loops', 'faces']:
+                value = getattr(ext_data, attr, None)
+                if value is not None:
+                    logger.info(f"Found {attr} attribute of type: {type(value)}")
+                    
+                    # Recursively convert nested objects
+                    if hasattr(value, '__dict__'):
+                        converted_value = vars(value)
+                        logger.info(f"Converted {attr} object to dict with keys: {list(converted_value.keys())}")
+                        
+                        # Special handling for attributes nested objects
+                        if 'attributes' in converted_value:
+                            attrs = converted_value['attributes']
+                            if hasattr(attrs, '__dict__'):
+                                converted_value['attributes'] = vars(attrs)
+                                logger.info(f"Converted {attr}.attributes to dict with keys: {list(converted_value['attributes'].keys())}")
+                            elif isinstance(attrs, dict):
+                                logger.info(f"{attr}.attributes is already dict with keys: {list(attrs.keys())}")
+                        
+                        result[attr] = converted_value
+                    elif isinstance(value, (list, dict)):
+                        result[attr] = value
+                        logger.info(f"Used {attr} as-is (list/dict)")
+                    else:
+                        logger.warning(f"Unknown type for {attr}: {type(value)}")
+                        
+            logger.info(f"Final converted extension data keys: {list(result.keys())}")
+            return result
+            
         except Exception as e:
-            logger.warning(f"Failed to convert extension data: {e}")
+            logger.error(f"Failed to convert extension data: {e}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
             return {}

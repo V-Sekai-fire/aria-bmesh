@@ -190,6 +190,10 @@ class BmeshEncoder:
         positions_buffer = bytearray()
         position_struct = struct.Struct("<fff")
         
+        # Create vertex normal data (custom attribute)
+        normals_buffer = bytearray()
+        normal_struct = struct.Struct("<fff")
+        
         # Create edge adjacency data (optional per schema)
         edges_buffer = bytearray()
         edge_index_struct = struct.Struct("<I")
@@ -197,6 +201,9 @@ class BmeshEncoder:
         for vert in bm.verts:
             # Pack vertex position (Vec3<f32> as required by schema)
             positions_buffer.extend(position_struct.pack(*vert.co))
+            
+            # Pack vertex normal (Vec3<f32> for surface smoothness preservation)
+            normals_buffer.extend(normal_struct.pack(*vert.normal))
             
             # Pack vertex-edge adjacency data using manual index mapping
             for edge in vert.link_edges:
@@ -214,6 +221,18 @@ class BmeshEncoder:
                 "count": vertex_count
             }
         }
+        
+        # Add vertex normals as custom attribute
+        if normals_buffer:
+            if "attributes" not in result:
+                result["attributes"] = {}
+            result["attributes"]["NORMAL"] = {
+                "data": normals_buffer,
+                "target": 34962,  # GL_ARRAY_BUFFER
+                "componentType": 5126,  # GL_FLOAT
+                "type": "VEC3",
+                "count": vertex_count
+            }
         
         # Add edges buffer if there's adjacency data
         if edges_buffer:
@@ -566,6 +585,10 @@ class BmeshEncoder:
         positions_buffer = bytearray()
         position_struct = struct.Struct("<fff")
         
+        # Create vertex normal data (custom attribute)
+        normals_buffer = bytearray()
+        normal_struct = struct.Struct("<fff")
+        
         # Create edge adjacency data (optional per schema)
         edges_buffer = bytearray()
         edge_index_struct = struct.Struct("<I")
@@ -573,6 +596,9 @@ class BmeshEncoder:
         for vert in bm.verts:
             # Pack vertex position (Vec3<f32> as required by schema)
             positions_buffer.extend(position_struct.pack(*vert.co))
+            
+            # Pack vertex normal (Vec3<f32> for surface smoothness preservation)
+            normals_buffer.extend(normal_struct.pack(*vert.normal))
             
             # Pack vertex-edge adjacency data
             for edge in vert.link_edges:
@@ -588,6 +614,18 @@ class BmeshEncoder:
                 "count": vertex_count
             }
         }
+        
+        # Add vertex normals as custom attribute
+        if normals_buffer:
+            if "attributes" not in result:
+                result["attributes"] = {}
+            result["attributes"]["NORMAL"] = {
+                "data": normals_buffer,
+                "target": 34962,  # GL_ARRAY_BUFFER
+                "componentType": 5126,  # GL_FLOAT
+                "type": "VEC3",
+                "count": vertex_count
+            }
         
         # Add edges buffer if there's adjacency data
         if edges_buffer:
@@ -1256,6 +1294,10 @@ class BmeshEncoder:
         positions_buffer = bytearray()
         position_struct = struct.Struct("<fff")
         
+        # Create vertex normal data (custom attribute)
+        normals_buffer = bytearray()
+        normal_struct = struct.Struct("<fff")
+        
         # Create edge adjacency data (optional per schema)
         edges_buffer = bytearray()
         edge_index_struct = struct.Struct("<I")
@@ -1275,6 +1317,9 @@ class BmeshEncoder:
             # Pack vertex position (Vec3<f32> as required by schema)
             positions_buffer.extend(position_struct.pack(*vertex.co))
             
+            # Pack vertex normal (Vec3<f32> for surface smoothness preservation)
+            normals_buffer.extend(normal_struct.pack(*vertex.normal))
+            
             # Pack vertex-edge adjacency data
             adjacent_edges = vertex_edge_map.get(vertex.index, [])
             for edge_idx in adjacent_edges:
@@ -1290,6 +1335,18 @@ class BmeshEncoder:
                 "count": vertex_count
             }
         }
+        
+        # Add vertex normals as custom attribute
+        if normals_buffer:
+            if "attributes" not in result:
+                result["attributes"] = {}
+            result["attributes"]["NORMAL"] = {
+                "data": normals_buffer,
+                "target": 34962,  # GL_ARRAY_BUFFER
+                "componentType": 5126,  # GL_FLOAT
+                "type": "VEC3",
+                "count": vertex_count
+            }
         
         # Add edges buffer if there's adjacency data
         if edges_buffer:
@@ -1737,6 +1794,15 @@ class BmeshEncoder:
             if manifold_idx is not None:
                 result_edges["manifold"] = manifold_idx
                 logger.debug(f"Added edge manifold buffer view: {manifold_idx}")
+            
+            # Handle edge attributes (smooth flags, etc.)
+            if "attributes" in edge_data:
+                result_edges["attributes"] = {}
+                for attr_name, attr_data in edge_data["attributes"].items():
+                    attr_idx = create_buffer_view(attr_data)
+                    if attr_idx is not None:
+                        result_edges["attributes"][attr_name] = attr_idx
+                        logger.debug(f"Added edge attribute '{attr_name}' buffer view: {attr_idx}")
                 
             result_data["edges"] = result_edges
 

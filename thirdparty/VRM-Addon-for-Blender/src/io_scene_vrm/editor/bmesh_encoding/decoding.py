@@ -81,6 +81,7 @@ class BmeshDecoder:
         with proper half-edge connectivity, preserving N-gons and non-manifold edges.
         """
         logger.info("Reconstructing non-manifold boundary representation from EXT_bmesh_encoding")
+        logger.info(f"Extension data structure: {list(extension_data.keys())}")
         
         # Extract topology information from extension data
         vertex_data = extension_data.get("vertices", {})
@@ -88,9 +89,18 @@ class BmeshDecoder:
         loop_data = extension_data.get("loops", {})
         face_data = extension_data.get("faces", {})
 
+        # Debug: Log detailed structure of each topology section
+        logger.info(f"Vertex data structure: {list(vertex_data.keys()) if isinstance(vertex_data, dict) else type(vertex_data)}")
+        logger.info(f"Edge data structure: {list(edge_data.keys()) if isinstance(edge_data, dict) else type(edge_data)}")
+        logger.info(f"Loop data structure: {list(loop_data.keys()) if isinstance(loop_data, dict) else type(loop_data)}")
+        logger.info(f"Face data structure: {list(face_data.keys()) if isinstance(face_data, dict) else type(face_data)}")
+
         # Validate that we have the necessary topology data
         if not all(isinstance(data, dict) and "count" in data for data in [vertex_data, edge_data, face_data]):
             logger.warning("EXT_bmesh_encoding: Missing required topology data for non-manifold reconstruction")
+            logger.warning(f"Vertex data valid: {isinstance(vertex_data, dict) and 'count' in vertex_data}")
+            logger.warning(f"Edge data valid: {isinstance(edge_data, dict) and 'count' in edge_data}")
+            logger.warning(f"Face data valid: {isinstance(face_data, dict) and 'count' in face_data}")
             return None
 
         vertex_count = vertex_data.get("count", 0)
@@ -183,15 +193,41 @@ class BmeshDecoder:
             # Update the mesh with BMesh data
             bm.to_mesh(mesh)
             
-            # Enable auto smooth to respect edge smooth flags
-            mesh.use_auto_smooth = True
+            # Handle smooth shading based on Blender version
+            if bpy.app.version < (4, 1):
+                # Blender 4.0 and earlier: use auto smooth
+                mesh.use_auto_smooth = True
+                logger.info("Applied auto smooth for Blender 4.0 and earlier")
+            else:
+                # Blender 4.1+: use per-face smooth flags
+                # Convert edge smooth flags to face smooth flags
+                for poly in mesh.polygons:
+                    # Check if all edges of this face are smooth
+                    all_edges_smooth = True
+                    for loop_idx in range(poly.loop_start, poly.loop_start + poly.loop_total):
+                        loop = mesh.loops[loop_idx]
+                        edge = mesh.edges[loop.edge_index]
+                        if hasattr(edge, 'use_edge_sharp') and edge.use_edge_sharp:
+                            all_edges_smooth = False
+                            break
+                    
+                    # Set face smooth flag based on edge smoothness
+                    poly.use_smooth = all_edges_smooth
+                
+                logger.info("Applied per-face smooth flags for Blender 4.1+")
             
             # Ensure proper mesh finalization for smooth shading preservation
             mesh.update()
             mesh.calc_loop_triangles()
             
-            # Calculate normals to respect edge smooth flags (use calc_normals instead of calc_normals_split)
-            mesh.calc_normals()
+            # Calculate normals to respect edge smooth flags
+            # Use the correct method based on Blender version
+            if hasattr(mesh, 'calc_normals'):
+                mesh.calc_normals()
+            elif hasattr(mesh, 'calc_normals_split'):
+                mesh.calc_normals_split()
+            else:
+                logger.warning("No normal calculation method available")
             
             logger.info("Successfully applied BMesh to Blender mesh with surface smoothness preservation")
             return True
@@ -277,11 +313,32 @@ class BmeshDecoder:
             return vertex_map
 
         # Read position data
-        positions_buffer_index = vertex_data.get("positions")
-        if positions_buffer_index is None:
+        positions_attr = vertex_data.get("positions")
+        if positions_attr is None:
             return vertex_map
 
-        positions = self._read_buffer_view(parse_result, positions_buffer_index, 5126, vertex_count, "VEC3")
+        logger.info(f"Positions attribute type: {type(positions_attr)}")
+        
+        # Handle both buffer view index (int) and direct data (dict with 'data' field)
+        positions = None
+        if isinstance(positions_attr, int):
+            # Buffer view index - read from buffer
+            positions = self._read_buffer_view(parse_result, positions_attr, 5126, vertex_count, "VEC3")
+            if positions:
+                logger.info(f"Successfully read {len(positions)//3} vertex positions from buffer view {positions_attr}")
+            else:
+                logger.warning(f"Failed to read vertex positions from buffer view {positions_attr}")
+        elif isinstance(positions_attr, dict) and "data" in positions_attr:
+            # Direct data - unpack from bytearray
+            data = positions_attr["data"]
+            if isinstance(data, (bytes, bytearray)):
+                positions = struct.unpack(f"<{vertex_count * 3}f", data)
+                logger.info(f"Successfully read {len(positions)//3} vertex positions from direct data")
+            else:
+                logger.warning(f"Positions data is not bytes/bytearray: {type(data)}")
+        else:
+            logger.warning(f"Positions attribute has unexpected format: {type(positions_attr)}")
+
         if not positions:
             return vertex_map
 
@@ -310,10 +367,32 @@ class BmeshDecoder:
         
         # Apply vertex normals
         if "NORMAL" in attributes:
-            normal_buffer_index = attributes["NORMAL"]
-            normals = self._read_buffer_view(parse_result, normal_buffer_index, 5126, vertex_count, "VEC3")
+            normal_attr = attributes["NORMAL"]
+            logger.info(f"NORMAL attribute type: {type(normal_attr)}, content: {normal_attr}")
+            
+            # Handle both buffer view index (int) and direct data (dict with 'data' field)
+            normals = None
+            if isinstance(normal_attr, int):
+                # Buffer view index - read from buffer
+                normal_buffer_index = normal_attr
+                normals = self._read_buffer_view(parse_result, normal_buffer_index, 5126, vertex_count, "VEC3")
+                if normals:
+                    logger.info(f"Successfully read {len(normals)//3} vertex normals from buffer view {normal_buffer_index}")
+                else:
+                    logger.warning(f"Failed to read vertex normals from buffer view {normal_buffer_index}")
+            elif isinstance(normal_attr, dict) and "data" in normal_attr:
+                # Direct data - unpack from bytearray
+                data = normal_attr["data"]
+                if isinstance(data, (bytes, bytearray)):
+                    normals = struct.unpack(f"<{vertex_count * 3}f", data)
+                    logger.info(f"Successfully read {len(normals)//3} vertex normals from direct data")
+                else:
+                    logger.warning(f"NORMAL data is not bytes/bytearray: {type(data)}")
+            else:
+                logger.warning(f"NORMAL attribute has unexpected format: {type(normal_attr)}")
+            
+            # Apply normals if we got them
             if normals:
-                logger.info(f"Successfully read {len(normals)//3} vertex normals from buffer")
                 for i in range(vertex_count):
                     vert = vertex_map.get(i)
                     if vert:
@@ -328,7 +407,7 @@ class BmeshDecoder:
                             logger.debug(f"Applied vertex normal {stored_normal} to vertex {i}")
                 logger.info(f"Vertex normal preservation: Applied normals to {vertex_count} vertices")
             else:
-                logger.warning("Failed to read vertex normals from buffer")
+                logger.warning("No vertex normals available to apply")
         
         # Apply vertex colors
         color_index = 0
@@ -382,26 +461,67 @@ class BmeshDecoder:
             return edge_map
 
         # Read edge vertex pairs
-        vertices_buffer_index = edge_data.get("vertices")
-        if vertices_buffer_index is None:
+        vertices_attr = edge_data.get("vertices")
+        if vertices_attr is None:
             return edge_map
 
-        edge_vertices = self._read_buffer_view(parse_result, vertices_buffer_index, 5125, edge_count * 2, "VEC2")
+        logger.info(f"Edge vertices attribute type: {type(vertices_attr)}")
+        
+        # Handle both buffer view index (int) and direct data (dict with 'data' field)
+        edge_vertices = None
+        if isinstance(vertices_attr, int):
+            # Buffer view index - read from buffer
+            edge_vertices = self._read_buffer_view(parse_result, vertices_attr, 5125, edge_count * 2, "VEC2")
+            if edge_vertices:
+                logger.info(f"Successfully read {len(edge_vertices)//2} edge vertex pairs from buffer view {vertices_attr}")
+            else:
+                logger.warning(f"Failed to read edge vertices from buffer view {vertices_attr}")
+        elif isinstance(vertices_attr, dict) and "data" in vertices_attr:
+            # Direct data - unpack from bytearray
+            data = vertices_attr["data"]
+            if isinstance(data, (bytes, bytearray)):
+                edge_vertices = struct.unpack(f"<{edge_count * 2}I", data)
+                logger.info(f"Successfully read {len(edge_vertices)//2} edge vertex pairs from direct data")
+            else:
+                logger.warning(f"Edge vertices data is not bytes/bytearray: {type(data)}")
+        else:
+            logger.warning(f"Edge vertices attribute has unexpected format: {type(vertices_attr)}")
+
         if not edge_vertices:
             return edge_map
 
         # Read edge smooth flags if available
         smooth_flags = None
         attributes = edge_data.get("attributes", {})
+        logger.info(f"Edge attributes available: {list(attributes.keys()) if attributes else 'None'}")
+        
         if "_SMOOTH" in attributes:
-            smooth_buffer_index = attributes["_SMOOTH"]
-            smooth_flags = self._read_buffer_view(parse_result, smooth_buffer_index, 5121, edge_count, "SCALAR")
-            if smooth_flags:
-                smooth_count = sum(1 for flag in smooth_flags if flag)
-                hard_count = len(smooth_flags) - smooth_count
-                logger.info(f"Successfully read {len(smooth_flags)} edge smooth flags from buffer: {smooth_count} smooth, {hard_count} hard")
+            smooth_attr = attributes["_SMOOTH"]
+            logger.info(f"_SMOOTH attribute type: {type(smooth_attr)}, content: {smooth_attr}")
+            
+            # Handle both buffer view index (int) and direct data (dict with 'data' field)
+            if isinstance(smooth_attr, int):
+                # Buffer view index - read from buffer
+                smooth_buffer_index = smooth_attr
+                smooth_flags = self._read_buffer_view(parse_result, smooth_buffer_index, 5121, edge_count, "SCALAR")
+                if smooth_flags:
+                    smooth_count = sum(1 for flag in smooth_flags if flag)
+                    hard_count = len(smooth_flags) - smooth_count
+                    logger.info(f"Successfully read {len(smooth_flags)} edge smooth flags from buffer view {smooth_buffer_index}: {smooth_count} smooth, {hard_count} hard")
+                else:
+                    logger.warning(f"Failed to read edge smooth flags from buffer view {smooth_buffer_index}")
+            elif isinstance(smooth_attr, dict) and "data" in smooth_attr:
+                # Direct data - unpack from bytearray
+                data = smooth_attr["data"]
+                if isinstance(data, (bytes, bytearray)):
+                    smooth_flags = struct.unpack(f"<{edge_count}B", data)
+                    smooth_count = sum(1 for flag in smooth_flags if flag)
+                    hard_count = len(smooth_flags) - smooth_count
+                    logger.info(f"Successfully read {len(smooth_flags)} edge smooth flags from direct data: {smooth_count} smooth, {hard_count} hard")
+                else:
+                    logger.warning(f"_SMOOTH data is not bytes/bytearray: {type(data)}")
             else:
-                logger.warning("Failed to read edge smooth flags from buffer")
+                logger.warning(f"_SMOOTH attribute has unexpected format: {type(smooth_attr)}")
         else:
             logger.warning("No '_SMOOTH' attribute found in edge data - all edges will default to smooth")
 
