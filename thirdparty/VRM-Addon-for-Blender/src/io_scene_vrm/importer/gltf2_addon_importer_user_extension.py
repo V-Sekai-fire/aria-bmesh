@@ -3,7 +3,7 @@ import secrets
 import string
 from typing import Optional
 
-from bpy.types import Image
+from bpy.types import Image, Armature
 
 from ..common.convert import sequence_or_none
 from ..common.logger import get_logger
@@ -14,6 +14,8 @@ logger = get_logger(__name__)
 
 class Gltf2AddonImporterUserExtension:
     current_import_id: Optional[str] = None
+    # Store EXT_bmesh_encoding data safely during import
+    _bmesh_encoding_data: dict[str, dict] = {}
 
     @classmethod
     def update_current_import_id(cls) -> str:
@@ -21,11 +23,18 @@ class Gltf2AddonImporterUserExtension:
             "".join(secrets.choice(string.digits) for _ in range(10))
         )
         cls.current_import_id = import_id
+        cls._bmesh_encoding_data.clear()  # Clear previous data
         return import_id
 
     @classmethod
     def clear_current_import_id(cls) -> None:
         cls.current_import_id = None
+        cls._bmesh_encoding_data.clear()
+
+    @classmethod
+    def get_stored_bmesh_encoding_data(cls, armature_name: str) -> Optional[dict]:
+        """Get stored EXT_bmesh_encoding data for an armature."""
+        return cls._bmesh_encoding_data.get(armature_name)
 
     # https://github.com/KhronosGroup/glTF-Blender-IO/blob/6f9d0d9fc1bb30e2b0bb019342ffe86bd67358fc/addons/io_scene_gltf2/blender/imp/gltf2_blender_image.py#L51
     def gather_import_image_after_hook(
@@ -61,6 +70,38 @@ class Gltf2AddonImporterUserExtension:
         index = images.index(image)
 
         bpy_image[self.current_import_id] = index
+
+    def gather_import_armature_bone_after_hook(
+        self, gltf_node: object, blender_object: object, blender_bone: object, gltf_importer: object
+    ) -> None:
+        """Hook to intercept and safely store EXT_bmesh_encoding data from armature extensions."""
+        try:
+            if not hasattr(blender_object, 'data') or not isinstance(blender_object.data, Armature):
+                return
+                
+            # Check if the armature has extension data that would cause the property error
+            armature_data = blender_object.data
+            
+            # Look for any extension data in the armature's custom properties
+            vrm_extension_data = None
+            if hasattr(armature_data, 'get'):
+                vrm_extension_data = armature_data.get('vrm_addon_extension')
+            
+            if vrm_extension_data and isinstance(vrm_extension_data, dict):
+                bmesh_encoding_data = vrm_extension_data.get('bmesh_encoding')
+                if bmesh_encoding_data:
+                    logger.info(f"Intercepting EXT_bmesh_encoding data for armature: {armature_data.name}")
+                    
+                    # Store the data safely using our class storage
+                    self._bmesh_encoding_data[armature_data.name] = bmesh_encoding_data
+                    
+                    # Remove the problematic data from the original location to prevent the error
+                    if 'bmesh_encoding' in vrm_extension_data:
+                        del vrm_extension_data['bmesh_encoding']
+                        logger.info(f"Safely stored and removed bmesh_encoding data from armature {armature_data.name}")
+                        
+        except Exception as e:
+            logger.error(f"Error intercepting EXT_bmesh_encoding data: {e}")
 
     def gather_import_mesh_before_hook(
         self, gltf_mesh: object, blender_mesh: object, gltf_importer: object

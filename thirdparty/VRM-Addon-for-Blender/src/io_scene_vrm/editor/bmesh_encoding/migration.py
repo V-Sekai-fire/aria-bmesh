@@ -14,7 +14,7 @@ logger = get_logger(__name__)
 
 
 def migrate(context: Context, armature: Object) -> None:
-    """Migrate bmesh_encoding extension data from IDPropertyGroup to proper property groups."""
+    """Migrate bmesh_encoding extension data from IDPropertyGroup or user extension storage to proper property groups."""
     if not armature or armature.type != "ARMATURE":
         return
     
@@ -22,16 +22,31 @@ def migrate(context: Context, armature: Object) -> None:
     if not isinstance(armature_data, Armature):
         return
     
-    # Check if there's raw bmesh_encoding data to migrate
-    vrm_addon_extension = armature_data.get("vrm_addon_extension")
-    if not isinstance(vrm_addon_extension, IDPropertyGroup):
-        return
-        
-    bmesh_encoding_data = vrm_addon_extension.get("bmesh_encoding")
-    if not isinstance(bmesh_encoding_data, IDPropertyGroup):
+    # First check if there's stored data from the user extension
+    from ...importer.gltf2_addon_importer_user_extension import Gltf2AddonImporterUserExtension
+    stored_data = Gltf2AddonImporterUserExtension.get_stored_bmesh_encoding_data(armature_data.name)
+    
+    bmesh_encoding_data = None
+    migration_source = None
+    
+    if stored_data:
+        # Use data from user extension storage
+        bmesh_encoding_data = stored_data
+        migration_source = "user_extension_storage"
+        logger.info(f"Found EXT_bmesh_encoding data in user extension storage for armature: {armature.name}")
+    else:
+        # Fallback to checking raw bmesh_encoding data in IDPropertyGroup
+        vrm_addon_extension = armature_data.get("vrm_addon_extension")
+        if isinstance(vrm_addon_extension, IDPropertyGroup):
+            bmesh_encoding_data = vrm_addon_extension.get("bmesh_encoding")
+            if isinstance(bmesh_encoding_data, IDPropertyGroup):
+                migration_source = "idproperty_group"
+                logger.info(f"Found EXT_bmesh_encoding data in IDPropertyGroup for armature: {armature.name}")
+    
+    if not bmesh_encoding_data:
         return
     
-    logger.info(f"Migrating EXT_bmesh_encoding data for armature: {armature.name}")
+    logger.info(f"Migrating EXT_bmesh_encoding data for armature: {armature.name} (source: {migration_source})")
     
     # Get the typed property group
     ext = get_armature_extension(armature_data)
