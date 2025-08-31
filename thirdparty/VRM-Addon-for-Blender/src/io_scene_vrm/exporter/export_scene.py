@@ -93,6 +93,11 @@ class EXPORT_SCENE_OT_vrm(Operator, ExportHelper):
         name="Enable Advanced Options",
         update=export_vrm_update_addon_preferences,
     )
+    export_ext_bmesh_encoding: BoolProperty(  # type: ignore[valid-type]
+        name="Export EXT_bmesh_encoding",
+        description="Enable BMesh topology preservation using EXT_bmesh_encoding extension",
+        update=export_vrm_update_addon_preferences,
+    )
     export_all_influences: BoolProperty(  # type: ignore[valid-type]
         name="Export All Bone Influences",
         description="Don't limit to 4, most viewers truncate to 4, "
@@ -235,6 +240,7 @@ class EXPORT_SCENE_OT_vrm(Operator, ExportHelper):
         export_invisibles: bool  # type: ignore[no-redef]
         export_only_selections: bool  # type: ignore[no-redef]
         enable_advanced_preferences: bool  # type: ignore[no-redef]
+        export_ext_bmesh_encoding: bool  # type: ignore[no-redef]
         export_all_influences: bool  # type: ignore[no-redef]
         export_lights: bool  # type: ignore[no-redef]
         export_gltf_animations: bool  # type: ignore[no-redef]
@@ -319,7 +325,7 @@ def export_vrm(
             vrm_exporter = Vrm0Exporter(
                 context,
                 export_objects,
-                armature_object,
+                export_ext_bmesh_encoding=export_preferences.export_ext_bmesh_encoding,
             )
 
         vrm_bytes = vrm_exporter.export_vrm()

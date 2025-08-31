@@ -73,6 +73,7 @@ from .abstract_base_vrm_exporter import (
     assign_dict,
     force_apply_modifiers,
 )
+from ..editor.bmesh_encoding.encoding import BmeshEncoder
 
 logger = get_logger(__name__)
 
@@ -83,16 +84,30 @@ class Vrm1Exporter(AbstractBaseVrmExporter):
         context: Context,
         export_objects: Sequence[Object],
         armature: Object,
-        *,
-        export_all_influences: bool,
-        export_lights: bool,
-        export_gltf_animations: bool,
+        export_preferences,
     ) -> None:
         super().__init__(context, export_objects, armature)
 
-        self.export_all_influences = export_all_influences
-        self.export_lights = export_lights
-        self.export_gltf_animations = export_gltf_animations
+        self.export_all_influences = (
+            export_preferences.enable_advanced_preferences
+            and export_preferences.export_all_influences
+        )
+        self.export_lights = (
+            export_preferences.enable_advanced_preferences
+            and export_preferences.export_lights
+        )
+        self.export_gltf_animations = (
+            export_preferences.enable_advanced_preferences
+            and export_preferences.export_gltf_animations
+        )
+        self.export_try_sparse_sk = (
+            export_preferences.enable_advanced_preferences
+            and export_preferences.export_try_sparse_sk
+        )
+        self.export_ext_bmesh_encoding = (
+            export_preferences.enable_advanced_preferences
+            and export_preferences.export_ext_bmesh_encoding
+        )
 
         self.extras_main_armature_key = (
             INTERNAL_NAME_PREFIX + self.export_id + "MainArmature"
@@ -2702,6 +2717,12 @@ class Vrm1Exporter(AbstractBaseVrmExporter):
             self.context, json_dict, material_name_to_index_dict
         )
 
+        # Add EXT_bmesh_encoding support for VRM 1.0
+        if self.export_ext_bmesh_encoding:
+            self.add_ext_bmesh_encoding_to_meshes(
+                json_dict, object_name_to_index_dict
+            )
+
         extensions_used = json_dict.get("extensionsUsed")
         if not isinstance(extensions_used, list):
             extensions_used = []
@@ -2830,6 +2851,68 @@ class Vrm1Exporter(AbstractBaseVrmExporter):
                 json_dict.pop(key, None)
 
         return pack_glb(json_dict, buffer0)
+
+    def add_ext_bmesh_encoding_to_meshes(
+        self,
+        json_dict: dict[str, Json],
+        object_name_to_index_dict: Mapping[str, int],
+    ) -> None:
+        """Add EXT_bmesh_encoding extension data to meshes for VRM 1.0."""
+        try:
+            mesh_dicts = json_dict.get("meshes")
+            if not isinstance(mesh_dicts, list):
+                return
+
+            extensions_used = json_dict.get("extensionsUsed")
+            if not isinstance(extensions_used, list):
+                extensions_used = []
+                json_dict["extensionsUsed"] = extensions_used
+
+            bmesh_encoder = BmeshEncoder()
+
+            # Process each mesh object that has a node index
+            for object_name, node_index in object_name_to_index_dict.items():
+                obj = self.context.blend_data.objects.get(object_name)
+                if not obj or obj.type != "MESH":
+                    continue
+
+                # Create BMesh from object for extension data
+                bm = bmesh_encoder.create_bmesh_from_mesh(obj)
+                if not bm:
+                    continue
+
+                try:
+                    # Generate EXT_bmesh_encoding extension data
+                    extension_data = bmesh_encoder.encode_bmesh_to_gltf_extension(bm)
+                    if not extension_data:
+                        continue
+
+                    # Find the corresponding mesh in the glTF data
+                    mesh_name = obj.data.name if obj.data else obj.name
+                    mesh_dict = next(
+                        (mesh for mesh in mesh_dicts if mesh.get("name") == mesh_name),
+                        None
+                    )
+
+                    if mesh_dict and "primitives" in mesh_dict:
+                        primitives = mesh_dict["primitives"]
+                        if isinstance(primitives, list) and primitives:
+                            # Add extension to first primitive
+                            primitive = primitives[0]
+                            if isinstance(primitive, dict):
+                                if "extensions" not in primitive:
+                                    primitive["extensions"] = {}
+                                primitive["extensions"]["EXT_bmesh_encoding"] = extension_data
+
+                                # Add to extensions used
+                                if "EXT_bmesh_encoding" not in extensions_used:
+                                    extensions_used.append("EXT_bmesh_encoding")
+
+                finally:
+                    bm.free()
+
+        except Exception as e:
+            logger.error(f"Failed to add EXT_bmesh_encoding to VRM 1.0 meshes: {e}")
 
 
 def find_node_world_matrix(
