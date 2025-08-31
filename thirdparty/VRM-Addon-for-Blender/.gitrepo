@@ -6,7 +6,7 @@
 [subrepo]
 	remote = https://github.com/V-Sekai-fire/VRM-Addon-for-Blender.git
 	branch = bmesh
-	commit = 5d015163a9472203991c48a77459eb8d351b4d85
-	parent = 1fdf1ffdf90e86c236d5013869a3788791e14cbe
+	commit = 0c73992642d7696686ca9fd166577ab89ee4804e
+	parent = a4f78e45421a525832e12be1bdccfc0935b5039a
 	method = merge
 	cmdver = 0.4.9
