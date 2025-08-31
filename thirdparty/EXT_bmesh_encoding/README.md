@@ -90,7 +90,7 @@ This approach ensures graceful degradation: files work in any glTF 2.0 viewer wi
                   "prev": 2,
                   "radial_next": 0,
                   "radial_prev": 0,
-                  "attributes": { "uv": [0.0, 0.0] }
+                  "attributes": { "TEXCOORD_0": [0.0, 0.0] }
                 }
               ],
               "faces": [
@@ -100,7 +100,7 @@ This approach ensures graceful degradation: files work in any glTF 2.0 viewer wi
                   "edges": [0, 1, 2],
                   "loops": [0, 1, 2],
                   "normal": [0.0, 0.0, 1.0],
-                  "attributes": { "material_id": 1 }
+                  "materialIndex": 1
                 }
               ]
             }

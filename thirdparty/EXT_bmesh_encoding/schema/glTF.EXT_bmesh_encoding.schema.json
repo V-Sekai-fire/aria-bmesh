@@ -213,9 +213,9 @@
                         },
                         "attributes": {
                             "type": "object",
-                            "description": "Buffer views for loop attributes",
+                            "description": "Buffer views for loop attributes (use glTF 2.0 standard names)",
                             "patternProperties": {
-                                "^[a-zA-Z_][a-zA-Z0-9_]*$": {
+                                "^(TEXCOORD_[0-9]+|COLOR_[0-9]+|[A-Z_][A-Z0-9_]*)$": {
                                     "allOf": [{"$ref": "glTFid.schema.json"}]
                                 }
                             }
