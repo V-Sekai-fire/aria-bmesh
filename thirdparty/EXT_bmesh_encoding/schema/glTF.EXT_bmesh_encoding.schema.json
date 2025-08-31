@@ -125,6 +125,10 @@
                     "allOf": [{"$ref": "glTFid.schema.json"}],
                     "description": "Buffer view containing face data offsets for variable-length arrays (u32 per face + 1)"
                 },
+                "materials": {
+                    "allOf": [{"$ref": "glTFid.schema.json"}],
+                    "description": "Buffer view containing material index per face (u32 per face)"
+                },
                 "attributes": {
                     "type": "object",
                     "description": "Buffer views for face attributes",
