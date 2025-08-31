@@ -140,18 +140,9 @@ class Vrm1Exporter(AbstractBaseVrmExporter):
                 
             logger.info(f"Processing mesh object '{obj.name}' for topology capture...")
             
-            # Create BMesh from original object to preserve topology
-            bm = bmesh_encoder.create_bmesh_from_mesh(obj)
-            if not bm:
-                logger.warning(f"Failed to create BMesh for object '{obj.name}'")
-                continue
-                
             try:
-                # Log BMesh statistics
-                logger.info(f"BMesh for '{obj.name}': {len(bm.verts)} verts, {len(bm.edges)} edges, {len(bm.faces)} faces")
-                
-                # Encode the original topology data
-                extension_data = bmesh_encoder.encode_bmesh_to_gltf_extension(bm)
+                # Encode the original topology data using the native mesh approach
+                extension_data = bmesh_encoder.encode_object_native(obj)
                 if extension_data:
                     # Store with both object name and mesh data name for lookup flexibility
                     self.original_mesh_topology[obj.name] = extension_data
@@ -167,8 +158,6 @@ class Vrm1Exporter(AbstractBaseVrmExporter):
                     logger.warning(f"Failed to encode topology data for mesh '{obj.name}'")
             except Exception as e:
                 logger.error(f"Error encoding topology for mesh '{obj.name}': {e}")
-            finally:
-                bm.free()
         
         logger.info(f"Topology capture complete. Stored data for {len(self.original_mesh_topology)} meshes: {list(self.original_mesh_topology.keys())}")
 
