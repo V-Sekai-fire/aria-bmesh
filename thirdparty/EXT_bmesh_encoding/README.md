@@ -443,6 +443,113 @@ All attributes follow glTF 2.0 conventions:
 - **Custom Attributes**: Must use `_` prefix (e.g., `_WEIGHT`, `_CUSTOM_DATA`)
 - **Buffer Views**: Each attribute stored in separate buffer view with proper typing
 
+## Material Handling Strategy
+
+EXT_bmesh_encoding resolves the tension between glTF's primitive-per-material model and BMesh's per-face materials through a dual representation approach:
+
+### Export Strategy (BMesh → glTF)
+
+**Primitive Optimization + Extension Preservation:**
+
+```javascript
+// 1. Group faces by material for optimal glTF primitives
+function exportBmeshToGltf(bmesh) {
+  const materialGroups = new Map();
+  
+  // Group faces by material
+  for (const face of bmesh.faces) {
+    const materialId = face.materialIndex;
+    if (!materialGroups.has(materialId)) {
+      materialGroups.set(materialId, []);
+    }
+    materialGroups.get(materialId).push(face);
+  }
+  
+  // Create one glTF primitive per material for performance
+  const primitives = [];
+  for (const [materialId, faces] of materialGroups) {
+    const triangles = triangulateFaces(faces);
+    primitives.push({
+      material: materialId,
+      indices: createIndexBuffer(triangles),
+      attributes: createAttributeBuffers(triangles),
+      extensions: {
+        EXT_bmesh_encoding: createBmeshExtension(faces) // Subset for this material
+      }
+    });
+  }
+  
+  // Store complete per-face material mapping in extension
+  const allFaceMaterials = bmesh.faces.map(face => face.materialIndex);
+  
+  return {
+    primitives: primitives,
+    // Complete BMesh extension data includes original per-face materials
+    completeBmeshExtension: {
+      // ... other BMesh data
+      faces: {
+        materials: createBufferView(allFaceMaterials), // Preserves original assignment
+        // ... other face data
+      }
+    }
+  };
+}
+```
+
+### Import Strategy (glTF → BMesh)
+
+**Extension Data as Authoritative Source:**
+
+```javascript
+// Reconstruct BMesh using extension data, not primitive materials
+function importGltfToBmesh(gltfData) {
+  const bmesh = {
+    vertices: new Map(),
+    edges: new Map(),
+    loops: new Map(), 
+    faces: new Map(),
+  };
+  
+  const ext = gltfData.extensions.EXT_bmesh_encoding;
+  
+  // Reconstruct faces with original per-face materials
+  const faceMaterials = readBufferView(buffers, bufferViews, ext.faces.materials);
+  
+  for (let i = 0; i < ext.faces.count; i++) {
+    const face = {
+      id: i,
+      vertices: getFaceVertices(i, ext.faces),
+      materialIndex: faceMaterials[i], // Use extension data, not primitive material
+      // ... other face data
+    };
+    bmesh.faces.set(i, face);
+  }
+  
+  return bmesh;
+}
+```
+
+### Implementation Guidelines
+
+**For Exporters:**
+- **Performance First**: Group faces by material into separate glTF primitives
+- **Preserve Fidelity**: Store original per-face material indices in extension data
+- **Handle Mixed Materials**: Split multi-material BMesh objects into multiple primitives
+- **Maintain Mapping**: Keep clear mapping between extension face indices and primitive faces
+
+**For Importers:**
+- **Extension Authority**: Use extension face materials as the authoritative source
+- **Ignore Primitive Materials**: Primitive materials are optimization artifacts
+- **Graceful Fallback**: When extension unavailable, infer materials from primitive assignment
+- **Validate Consistency**: Check that extension data matches primitive grouping when possible
+
+**For Viewers:**
+- **Standard Rendering**: Use glTF primitives for efficient rendering (one draw call per material)
+- **BMesh Operations**: Use extension data for topology operations requiring per-face materials
+- **Hybrid Approach**: Combine both representations based on use case requirements
+
+This approach ensures both **rendering performance** (optimized primitives) and **data fidelity** (complete BMesh reconstruction) without forcing a choice between them.
+
 ## Oriented 2-Manifold Validation
 
 EXT_bmesh_encoding supports EXT_mesh_manifold compatibility through BMesh topology:
