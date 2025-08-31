@@ -14,6 +14,7 @@ shellcheck "$0"
 export PYTHONDONTWRITEBYTECODE=1
 prefix_name=VRM_Addon_for_Blender
 release_tag_name=$1
+commit_sha=$(git rev-parse HEAD)
 
 gh release view "$release_tag_name"
 
@@ -26,19 +27,9 @@ fi
 
 underscore_version=$(ruby -e "puts ARGV[0].sub(/^v/, '').split('.', 3).join('_')" "$release_tag_name")
 version=$(ruby -e "puts ARGV[0].split('_', 3).join('.')" "$underscore_version")
-blender_manifest_version=$(
-  python3 <<'PRINT_BLENDER_MANIFEST_VERSION'
-import tomllib
-from pathlib import Path
+bl_info_version=$(cd src && python3 -c 'import io_scene_vrm; print(str(".".join(map(str, io_scene_vrm.bl_info["version"]))))')
 
-blender_manifest_path = Path("src/io_scene_vrm/blender_manifest.toml")
-blender_manifest_text = blender_manifest_path.read_text()
-blender_manifest = tomllib.loads(blender_manifest_text)
-print(blender_manifest["version"])
-PRINT_BLENDER_MANIFEST_VERSION
-)
-
-if [ "$version" != "$blender_manifest_version" ]; then
+if [ "$version" != "$bl_info_version" ]; then
   release_postfix=draft
 else
   release_postfix=release
@@ -69,51 +60,105 @@ mv -v "$original_extension_path" "$extension_path"
 gh release upload "$release_tag_name" "${extension_path}#(Blender 4.2 or later) VRM Add-on for Blender Extension ${version} (zip)"
 gh release upload "$release_tag_name" "${prefix_name}-${underscore_version}.zip#(Blender 2.93 - 4.1) VRM Add-on for Blender ${version} (zip)"
 
-# Create release notes for Blender Extensions
-github_release_body_path=$(mktemp)
-blender_extensions_release_note_path=$(mktemp)
-gh release view "$release_tag_name" --json body --jq .body | tee "$github_release_body_path"
-ruby -- - "$github_release_body_path" "$blender_extensions_release_note_path" <<'CREATE_BLENDER_EXTENSIONS_RELEASE_NOTE'
-require "uri"
+readme_unzip_dir=$(mktemp -d --suffix=-readme-unzip-dir)
+unzip -d "$readme_unzip_dir" "${prefix_name}-${release_postfix}.zip"
+readme_base="${readme_unzip_dir}/${prefix_name}-${release_postfix}"
+rm "$readme_base/__init__.py"
+readme_tar_xz_version=$(ruby -e "puts ARGV[0].split('.', 3).join('_')" "$bl_info_version")
+readme_tar_xz_abs_path="${PWD}/${readme_tar_xz_version}.tar.xz"
+XZ_OPT='-9e' tar -C "$readme_base" -cvJf "$readme_tar_xz_abs_path" .
 
-input_path, output_path = ARGV
-title, body = File.read(input_path).strip.split("\n\n", 2)
+archive_branch_dir=$(mktemp -d --suffix=-branch-release-archive)
+git fetch --depth=1 origin release-archive
+git worktree add "${archive_branch_dir}" origin/release-archive
+rm -fr "${archive_branch_dir}/debug"
+mkdir -p "${archive_branch_dir}/debug"
+cp "${prefix_name}-${release_postfix}.zip" "${archive_branch_dir}/"
+if [ "$release_postfix" != "release" ]; then
+  cp "$readme_tar_xz_abs_path" "${archive_branch_dir}/debug/"
+fi
+(
+  cd "${archive_branch_dir}"
+  git add .
+  git config --global user.email "isamu@leafytree.jp"
+  git config --global user.name "[BOT] Isamu Mogi"
+  git commit -m "docs: release $version [BOT]"
+)
 
-uri_str = title.strip.sub(/^## \[[.0-9]+\]\(/, "").sub(/\).*$/, "").strip
-uri = nil
-begin
-  uri = URI.parse(uri_str)
-rescue => e
-  p e
-end
+readme_branch_dir=$(mktemp -d --suffix=-branch-README)
+git fetch --depth=1 origin README
+git worktree add "${readme_branch_dir}" origin/README
+readme_addon_dir="${readme_branch_dir}/.github/vrm_addon_for_blender_private"
+find "$readme_addon_dir" -name "*.zip" -exec rm -v {} \;
+find "$readme_addon_dir" -name "*.tar.xz" -exec rm -v {} \;
+cp "${readme_tar_xz_abs_path}" "${readme_addon_dir}/"
+cp src/io_scene_vrm/__init__.py "$readme_branch_dir/"
+github_downloaded_zip_path="${PWD}/readme.zip"
+(
+  cd "$readme_branch_dir"
+  git add .
+  git config --global user.email "isamu@leafytree.jp"
+  git config --global user.name "[BOT] Isamu Mogi"
+  git commit -m "docs: update the latest internal partial code to $commit_sha [BOT]"
+  git archive HEAD --prefix=${prefix_name}-README/ --output="$github_downloaded_zip_path"
+)
 
-output = body.strip + "\n\n\n"
-if uri
-  output += "**Full Changelog:** #{uri}\n"
-end
+gh_pages_branch_dir=$(mktemp -d --suffix=-branch-gh-pages)
+git fetch --depth=1 origin gh-pages
+git worktree add "${gh_pages_branch_dir}" origin/gh-pages
+mkdir -p "${gh_pages_branch_dir}/releases"
+cp "${prefix_name}-${release_postfix}.zip" "${gh_pages_branch_dir}/releases/"
+(
+  cd "$gh_pages_branch_dir"
+  git add .
+  git config --global user.email "isamu@leafytree.jp"
+  git config --global user.name "[BOT] Isamu Mogi"
+  git commit -m "docs: deploy the latest release [BOT]"
+)
 
-File.write(output_path, output)
-CREATE_BLENDER_EXTENSIONS_RELEASE_NOTE
-cat "$blender_extensions_release_note_path"
+blender --background --python-expr "import bpy; from pathlib import Path; Path('blender_major_minor.txt').write_text(f'{bpy.app.version[0]}.{bpy.app.version[1]}')"
+
+addon_dir="$HOME/.config/blender/$(cat blender_major_minor.txt)/scripts/addons/${prefix_name}-README"
+if ! BLENDER_VRM_USE_TEST_EXPORTER_VERSION=true blender \
+  --background \
+  -noaudio \
+  --python-exit-code 1 \
+  --python tools/github_code_archive.py -- "$github_downloaded_zip_path" \
+  ; then
+  find "$addon_dir"
+  exit 1
+fi
+
+installed_readme_tar_xz_path="${addon_dir}/.github/vrm_addon_for_blender_private/${readme_tar_xz_version}.tar.xz"
+if [ -e "$installed_readme_tar_xz_path" ]; then
+  echo Failed to remove "$installed_readme_tar_xz_path"
+  exit 1
+fi
+
+rm -fr "$addon_dir/.github"
+rm "$addon_dir/README.md"
+find "$addon_dir" -name "__pycache__" -type d -print0 | xargs --null rm -fr
+
+addon_check_unzip_dir=$(mktemp -d --suffix=-addon-check-unzip)
+unzip -d "$addon_check_unzip_dir" "${prefix_name}-${release_postfix}.zip"
+
+diff -ru "$addon_check_unzip_dir/${prefix_name}-${release_postfix}" "$addon_dir"
+
+(
+  cd "${archive_branch_dir}"
+  git push origin HEAD:release-archive
+)
 
 if [ "$release_postfix" = "release" ]; then
+  (
+    cd "$readme_branch_dir"
+    git push origin HEAD:README
+  )
+  (
+    cd "$gh_pages_branch_dir"
+    git push origin HEAD:gh-pages
+  )
   gh release edit "$release_tag_name" --draft=false --latest
-
-  # https://developer.blender.org/docs/features/extensions/ci_cd/
-  set +x # Hide the content of Authorization variables
-  curl \
-    --fail-with-body \
-    --show-error \
-    --retry 5 \
-    --retry-delay 60 \
-    --retry-all-errors \
-    --output blender_extensions_upload.log \
-    --request POST \
-    --header "Authorization:bearer $BLENDER_EXTENSIONS_TOKEN" \
-    --form "version_file=@$extension_path" \
-    --form "release_notes=<$blender_extensions_release_note_path" \
-    "https://extensions.blender.org/api/v1/extensions/vrm/versions/upload/"
-  set -x
 else
   gh release edit "$release_tag_name" --prerelease
 fi

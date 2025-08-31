@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: MIT OR GPL-3.0-or-later
 # SPDX-FileCopyrightText: 2018 iCyP
 
+import importlib
 import itertools
 import re
 import statistics
@@ -33,7 +34,7 @@ from mathutils import Matrix, Vector
 
 from ..common import convert, gltf, shader
 from ..common.convert import Json
-from ..common.deep import make_json, make_json_dict
+from ..common.deep import make_json
 from ..common.gl import (
     GL_FLOAT,
     GL_LINEAR,
@@ -65,7 +66,6 @@ from ..editor.search import MESH_CONVERTIBLE_OBJECT_TYPES
 from ..editor.t_pose import setup_humanoid_t_pose
 from ..editor.vrm0.property_group import Vrm0BlendShapeGroupPropertyGroup
 from ..external.io_scene_gltf2_support import (
-    gather_gltf2_io_material,
     image_to_image_bytes,
     init_extras_export,
 )
@@ -74,7 +74,6 @@ from .abstract_base_vrm_exporter import (
     assign_dict,
     force_apply_modifiers,
 )
-from ..editor.bmesh_encoding.encoding import BmeshEncoder
 
 logger = get_logger(__name__)
 
@@ -86,17 +85,6 @@ class Vrm0Exporter(AbstractBaseVrmExporter):
         mime_type: str
         image_bytes: bytes
         export_image_index: int
-
-    def __init__(
-        self,
-        context: Context,
-        export_objects: list[Object],
-        *,
-        export_ext_bmesh_encoding: bool = False,
-    ) -> None:
-        super().__init__(context)
-        self.export_objects = export_objects
-        self.export_ext_bmesh_encoding = export_ext_bmesh_encoding
 
     @dataclass
     class PrimitiveTarget:
@@ -157,7 +145,7 @@ class Vrm0Exporter(AbstractBaseVrmExporter):
             texcoord: Optional[tuple[float, float]],
         ) -> IndexSearchKey:
             return (
-                # TODO: Format compatible with old exporter
+                # TODO: 旧エクスポーターと互換性のある形式
                 blender_vertex_index,
                 normal,
                 texcoord,
@@ -241,7 +229,6 @@ class Vrm0Exporter(AbstractBaseVrmExporter):
         with (
             save_workspace(self.context),
             self.clear_blend_shape_proxy_previews(self.armature_data),
-            self.enable_deform_for_all_referenced_bones(self.armature_data),
             setup_humanoid_t_pose(self.context, self.armature),
             self.hide_mtoon1_outline_geometry_nodes(self.context),
             create_progress(self.context) as progress,
@@ -531,13 +518,12 @@ class Vrm0Exporter(AbstractBaseVrmExporter):
             material_value_dicts: list[Json] = []
             blend_shape_group_dict["materialValues"] = material_value_dicts
             for material_value in blend_shape_group.material_values:
-                material_value_material = material_value.material
-                if not material_value_material or not material_value_material.name:
+                if not material_value.material or not material_value.material.name:
                     continue
 
                 material_value_dicts.append(
                     {
-                        "materialName": material_value_material.name,
+                        "materialName": material_value.material.name,
                         "propertyName": material_value.property_name,
                         "targetValue": [v.value for v in material_value.target_value],
                     }
@@ -652,8 +638,8 @@ class Vrm0Exporter(AbstractBaseVrmExporter):
                 "stiffiness": bone_group.stiffiness,
                 "gravityPower": bone_group.gravity_power,
                 "gravityDir": {
-                    # TODO: firstPerson.firstPersonBoneOffset and BoneGroup.gravityDir
-                    # axis conversion is original. Need to document this.
+                    # TODO: firstPerson.firstPersonBoneOffsetとBoneGroup.gravityDirの
+                    # 軸変換はオリジナルになっている。これについてコメントを記載する。
                     "x": bone_group.gravity_dir[0],
                     "y": bone_group.gravity_dir[2],
                     "z": bone_group.gravity_dir[1],
@@ -770,8 +756,8 @@ class Vrm0Exporter(AbstractBaseVrmExporter):
                 first_person_dict["firstPersonBone"] = first_person_bone_index
 
         first_person_dict["firstPersonBoneOffset"] = {
-            # TODO: firstPerson.firstPersonBoneOffset and BoneGroup.gravityDir
-            # axis conversion is original. Need to document this.
+            # TODO: firstPerson.firstPersonBoneOffsetとBoneGroup.gravityDirの
+            # 軸変換はオリジナルになっている。これについてコメントを記載する。
             "x": first_person.first_person_bone_offset[0],
             "y": first_person.first_person_bone_offset[2],
             "z": first_person.first_person_bone_offset[1],
@@ -881,7 +867,7 @@ class Vrm0Exporter(AbstractBaseVrmExporter):
         gltf = get_material_extension(material).mtoon1
         mtoon = gltf.extensions.vrmc_materials_mtoon
 
-        material_dict |= make_json_dict(
+        material_dict.update(
             {
                 "alphaMode": gltf.alpha_mode,
                 "doubleSided": gltf.double_sided,
@@ -1145,7 +1131,6 @@ class Vrm0Exporter(AbstractBaseVrmExporter):
             dst_blend = 0
             z_write = 1
             alphatest_on = False
-            alphablend_on = False
             render_queue = -1
             render_type = "Opaque"
         elif gltf.alpha_mode == gltf.ALPHA_MODE_MASK.identifier:
@@ -1154,7 +1139,6 @@ class Vrm0Exporter(AbstractBaseVrmExporter):
             dst_blend = 0
             z_write = 1
             alphatest_on = True
-            alphablend_on = False
             render_queue = gltf.mtoon0_render_queue
             render_type = "TransparentCutout"
             float_properties["_Cutoff"] = gltf.alpha_cutoff
@@ -1165,7 +1149,6 @@ class Vrm0Exporter(AbstractBaseVrmExporter):
             dst_blend = 10
             z_write = 0
             alphatest_on = False
-            alphablend_on = True
             render_queue = gltf.mtoon0_render_queue
             render_type = "Transparent"
         else:
@@ -1174,7 +1157,6 @@ class Vrm0Exporter(AbstractBaseVrmExporter):
             dst_blend = 10
             z_write = 1
             alphatest_on = False
-            alphablend_on = True
             render_queue = gltf.mtoon0_render_queue
             render_type = "Transparent"
             float_properties["_Cutoff"] = gltf.alpha_cutoff  # for compatibility
@@ -1193,7 +1175,7 @@ class Vrm0Exporter(AbstractBaseVrmExporter):
         )
         float_properties["_ReceiveShadowRate"] = gltf.mtoon0_receive_shadow_rate
 
-        keyword_map["_ALPHABLEND_ON"] = alphablend_on
+        keyword_map["_ALPHABLEND_ON"] = material.blend_method not in ("OPAQUE", "CLIP")
         keyword_map["_ALPHAPREMULTIPLY_ON"] = False
 
         float_properties["_BlendMode"] = blend_mode
@@ -1421,7 +1403,7 @@ class Vrm0Exporter(AbstractBaseVrmExporter):
         keyword_map: dict[str, bool] = {}
         tag_map: dict[str, str] = {}
         texture_properties: dict[str, int] = {}
-        material_dict |= make_json_dict(
+        material_dict.update(
             {
                 "name": material.name,
                 "extensions": {"KHR_materials_unlit": {}},
@@ -1503,7 +1485,7 @@ class Vrm0Exporter(AbstractBaseVrmExporter):
             float_properties["_Cutoff"] = alpha_cutoff
 
         outline_width_mode = max(
-            0, min(2, round(shader.get_float_value_or(node, "OutlineWidthMode")))
+            0, min(2, int(round(shader.get_float_value_or(node, "OutlineWidthMode"))))
         )
         float_properties["_OutlineWidthMode"] = outline_width_mode
         if outline_width_mode == 1:
@@ -1512,7 +1494,7 @@ class Vrm0Exporter(AbstractBaseVrmExporter):
             keyword_map["MTOON_OUTLINE_WIDTH_SCREEN"] = True
 
         outline_color_mode = max(
-            0, min(2, round(shader.get_float_value_or(node, "OutlineColorMode")))
+            0, min(2, int(round(shader.get_float_value_or(node, "OutlineColorMode"))))
         )
         float_properties["_OutlineColorMode"] = outline_color_mode
         if outline_width_mode > 0:
@@ -1574,7 +1556,7 @@ class Vrm0Exporter(AbstractBaseVrmExporter):
 
         float_properties["_CullMode"] = 2 if material.use_backface_culling else 0
 
-        # Control texture addition order for compatibility with old exporter
+        # 旧エクスポーターとの互換性のため、テクスチャ追加順を制御している
 
         main_tex = self.create_mtoon0_texture_info_dict(
             self.context,
@@ -1599,7 +1581,7 @@ class Vrm0Exporter(AbstractBaseVrmExporter):
             texture_properties["_MainTex"] = main_tex_texture_property
             vector_properties["_MainTex"] = main_tex_vector_property
 
-        # TODO: For compatibility. There might be correct configuration values
+        # TODO: 互換性のためのもの。たぶん正しい設定値がある気がする
         default_texture_vector_property = [0, 0, 1, 1]
 
         shade_texture = self.create_mtoon0_texture_info_dict(
@@ -1753,7 +1735,7 @@ class Vrm0Exporter(AbstractBaseVrmExporter):
         vrm_material_property_dict: dict[str, Json],
         node: ShaderNodeGroup,
     ) -> None:
-        vrm_material_property_dict |= make_json_dict(
+        vrm_material_property_dict.update(
             {
                 "name": material.name,
                 "shader": "VRM_USE_GLTFSHADER",
@@ -1776,7 +1758,7 @@ class Vrm0Exporter(AbstractBaseVrmExporter):
             "roughnessFactor": shader.get_float_value_or(node, "roughness", 0.0, 1.0),
         }
 
-        material_dict |= make_json_dict(
+        material_dict.update(
             {
                 "name": material.name,
                 "emissiveFactor": list(
@@ -1901,7 +1883,7 @@ class Vrm0Exporter(AbstractBaseVrmExporter):
         vector_properties: dict[str, Sequence[float]] = {}
         texture_properties: dict[str, int] = {}
 
-        vrm_material_property_dict |= make_json_dict(
+        vrm_material_property_dict.update(
             {
                 "name": material.name,
                 "shader": "VRM/UnlitTransparentZWrite",
@@ -1918,7 +1900,7 @@ class Vrm0Exporter(AbstractBaseVrmExporter):
             "roughnessFactor": 0.9,
         }
 
-        material_dict |= make_json_dict(
+        material_dict.update(
             {
                 "name": material.name,
                 "alphaMode": "BLEND",
@@ -1981,17 +1963,43 @@ class Vrm0Exporter(AbstractBaseVrmExporter):
             }
         )
 
-        gltf2_io_material = gather_gltf2_io_material(
-            material, self.gltf2_addon_export_settings
-        )
-        if not gltf2_io_material:
+        if bpy.app.version < (3, 6):
+            module_name = "io_scene_gltf2.blender.exp.gltf2_blender_gather_materials"
+        elif bpy.app.version < (4, 3):
+            module_name = (
+                "io_scene_gltf2.blender.exp.material.gltf2_blender_gather_materials"
+            )
+        else:
+            module_name = "io_scene_gltf2.blender.exp.material.materials"
+        try:
+            gltf2_blender_gather_materials = importlib.import_module(module_name)
+        except ModuleNotFoundError:
+            logger.exception("Failed to import glTF 2.0 Add-on")
             return
 
+        gather_material = gltf2_blender_gather_materials.gather_material
+
+        gltf2_io_material: Optional[object] = None
         try:
-            alpha_cutoff = convert.float_or_none(
-                getattr(gltf2_io_material, "alpha_cutoff", None)
-            )
-            if alpha_cutoff is not None:
+            if bpy.app.version < (3, 2):
+                # https://github.com/KhronosGroup/glTF-Blender-IO/blob/abd8380e19dbe5e5fb9042513ad6b744032bc9bc/addons/io_scene_gltf2/blender/exp/gltf2_blender_gather_materials.py#L32
+                gltf2_io_material = gather_material(
+                    material, self.gltf2_addon_export_settings
+                )
+            elif bpy.app.version < (4, 0):
+                # https://github.com/KhronosGroup/glTF-Blender-IO/blob/9e08d423a803da52eb08fbc93d9aa99f3f681a27/addons/io_scene_gltf2/blender/exp/gltf2_blender_gather_primitives.py#L71-L96
+                # https://github.com/KhronosGroup/glTF-Blender-IO/blob/9e08d423a803da52eb08fbc93d9aa99f3f681a27/addons/io_scene_gltf2/blender/exp/gltf2_blender_gather_materials.py#L42
+                gltf2_io_material = gather_material(
+                    material, 0, self.gltf2_addon_export_settings
+                )
+            else:
+                # https://github.com/KhronosGroup/glTF-Blender-IO/blob/765c1bd8f59ce34d6e346147f379af191969777f/addons/io_scene_gltf2/blender/exp/material/gltf2_blender_gather_materials.py#L47
+                gltf2_io_material, _ = gather_material(
+                    material, self.gltf2_addon_export_settings
+                )
+
+            alpha_cutoff = getattr(gltf2_io_material, "alpha_cutoff", None)
+            if isinstance(alpha_cutoff, (int, float)):
                 material_dict["alphaCutoff"] = alpha_cutoff
 
             alpha_mode = getattr(gltf2_io_material, "alpha_mode", None)
@@ -2042,11 +2050,11 @@ class Vrm0Exporter(AbstractBaseVrmExporter):
                     )
                 )
                 if isinstance(khr_materials_emissive_strength, dict):
-                    emissive_strength = convert.float_or_none(
-                        khr_materials_emissive_strength.get("emissiveStrength")
+                    emissive_strength = khr_materials_emissive_strength.get(
+                        "emissiveStrength"
                     )
                     if (
-                        emissive_strength is not None
+                        isinstance(emissive_strength, (int, float))
                         and emissive_strength >= 0
                         and emissive_strength != 1.0
                     ):
@@ -2114,10 +2122,10 @@ class Vrm0Exporter(AbstractBaseVrmExporter):
                     ),
                 )
 
-                metallic_factor = convert.float_or_none(
-                    getattr(pbr_metallic_roughness, "metallic_factor", None)
+                metallic_factor = getattr(
+                    pbr_metallic_roughness, "metallic_factor", None
                 )
-                if metallic_factor is not None:
+                if isinstance(metallic_factor, (int, float)):
                     pbr_metallic_roughness_dict["metallicFactor"] = metallic_factor
 
                 assign_dict(
@@ -2136,10 +2144,10 @@ class Vrm0Exporter(AbstractBaseVrmExporter):
                     ),
                 )
 
-                roughness_factor = convert.float_or_none(
-                    getattr(pbr_metallic_roughness, "roughness_factor", None)
+                roughness_factor = getattr(
+                    pbr_metallic_roughness, "roughness_factor", None
                 )
-                if roughness_factor is not None:
+                if isinstance(roughness_factor, (int, float)):
                     pbr_metallic_roughness_dict["roughnessFactor"] = roughness_factor
 
                 if pbr_metallic_roughness_dict:
@@ -2328,10 +2336,9 @@ class Vrm0Exporter(AbstractBaseVrmExporter):
             )
             scene_node_indices: list[int] = [humanoid_root_bone_index]
         else:
-            # If there are multiple root bones, expand each to the scene
-            # This follows the old exporter specification, but I'm not
-            # confident it's correct
-            # It might be better to create a parent bone and attach skin to it
+            # ルートボーンか複数ある場合、それぞれをシーンに展開する
+            # これは旧エクスポーターの仕様そのままだが、本当に正しいかは自信がない
+            # 親となるボーンを作り、それにskinをつけるのが本当は良いかもしれない
             scene_node_indices = []
             for bone in bones:
                 root_node_index = self.write_armature_bone_nodes(
@@ -2344,8 +2351,8 @@ class Vrm0Exporter(AbstractBaseVrmExporter):
                 )
                 scene_node_indices.append(root_node_index)
 
-                # Check if there are bones belonging to Humanoid,
-                # and set them as humanoid_root_bone_index
+                # Humanoidに属しているボーンがあるかを調べ、
+                # それをhumanoid_root_bone_indexとして設定
                 humanoid = get_armature_extension(self.armature_data).vrm0.humanoid
                 traversing_bones = [bone]
                 while traversing_bones:
@@ -2399,8 +2406,8 @@ class Vrm0Exporter(AbstractBaseVrmExporter):
             }
         )
 
-        # Hitogata 0.6.0.1 seems to error when sharing skin,
-        # so give each mesh its own skin with the same content
+        # Hitogata 0.6.0.1はskinを共有するとエラーになるようなので
+        # メッシュに対してそれぞれ内容の同じskinを持たせる
         skin_dict: dict[str, Json] = {
             "joints": make_json(skin_joint_node_indices),
             "inverseBindMatrices": accessor_index,
@@ -2466,8 +2473,8 @@ class Vrm0Exporter(AbstractBaseVrmExporter):
         material_dicts: list[dict[str, Json]],
         extensions_vrm_material_property_dicts: list[Json],
     ) -> int:
-        # Cluster does not allow primitives without materials,
-        # so assign empty material.
+        # clusterではマテリアル無しのプリミティブが許可されないため、
+        # 空のマテリアルを付与する。
         missing_material_name = "glTF_2_0_default_material"
         for i, material_dict in enumerate(material_dicts):
             if material_dict.get("name") == missing_material_name:
@@ -2512,11 +2519,10 @@ class Vrm0Exporter(AbstractBaseVrmExporter):
             texcoord_u, texcoord_v = uv_layer.data[loop_index].uv
             texcoord = (texcoord_u, 1 - texcoord_v)
 
-        # Use loop normals instead of vertex normals. This may lose something,
-        # but it's judged safer to keep it the same as the glTF 2.0 addon.
+        # 頂点のノーマルではなくloopのノーマルを使う。これで失うものはあると
+        # 思うが、glTF 2.0アドオンと同一にしておくのが無難だろうと判断。
         # https://github.com/KhronosGroup/glTF-Blender-IO/pull/1127
-        # TODO: This implementation should really average the three normals
-        # from the loop
+        # TODO: この実装は本来はループを回った3つの法線を平均にするべき
         normal = main_mesh_data.loops[loop_index].normal
 
         already_added_vertex_index = (
@@ -2546,7 +2552,7 @@ class Vrm0Exporter(AbstractBaseVrmExporter):
                     )
                     is not None
                 )
-                # Set joint to zero when weight is zero
+                # ウエイトがゼロの場合ジョイントもゼロにする
                 # https://github.com/KhronosGroup/glTF/tree/f33f90ad9439a228bf90cde8319d851a52a3f470/specification/2.0#skinned-mesh-attributes
                 and not ((weight := vertex_group_element.weight) < float_info.epsilon)
             ]
@@ -2598,8 +2604,7 @@ class Vrm0Exporter(AbstractBaseVrmExporter):
                         break
 
                 if joint is None:
-                    # TODO: Probably better to use root bone traced from hips
-                    # rather than hips itself
+                    # TODO: たぶんhipsよりはhipsから辿ったルートボーンの方が良い
                     ext = get_armature_extension(self.armature_data)
                     for human_bone in ext.vrm0.humanoid.human_bones:
                         if human_bone.bone != "hips":
@@ -2613,11 +2618,7 @@ class Vrm0Exporter(AbstractBaseVrmExporter):
 
                 if joint is None:
                     message = "No fallback bone index found"
-                    if not skin_joints:
-                        raise ValueError(message)
-                    logger.error(message)
-                    joint = skin_joints[0]
-
+                    raise ValueError(message)
                 weights = (1.0, 0, 0, 0)
                 joints = (joint, 0, 0, 0)
             else:
@@ -2634,30 +2635,25 @@ class Vrm0Exporter(AbstractBaseVrmExporter):
             shape_key_name,
             shape_key_mesh_data,
         ) in shape_key_name_to_mesh_data.items():
-            shape_key_mesh_data_vertices = shape_key_mesh_data.vertices
-            if vertex_index < len(shape_key_mesh_data_vertices):
-                (
-                    shape_key_position_x,
-                    shape_key_position_y,
-                    shape_key_position_z,
-                ) = shape_key_mesh_data_vertices[vertex_index].co
-                targets_position.append(
-                    convert.axis_blender_to_gltf(
-                        (
-                            shape_key_position_x - position_x,
-                            shape_key_position_y - position_y,
-                            shape_key_position_z - position_z,
-                        )
+            (
+                shape_key_position_x,
+                shape_key_position_y,
+                shape_key_position_z,
+            ) = shape_key_mesh_data.vertices[vertex_index].co
+            targets_position.append(
+                convert.axis_blender_to_gltf(
+                    (
+                        shape_key_position_x - position_x,
+                        shape_key_position_y - position_y,
+                        shape_key_position_z - position_z,
                     )
                 )
-            else:
-                targets_position.append((0, 0, 0))
-
+            )
             if no_morph_normal_export:
                 targets_normal.append((0, 0, 0))
                 continue
 
-            if shape_key_name_to_vertex_index_to_morph_normal_diffs is None:
+            if not shape_key_name_to_vertex_index_to_morph_normal_diffs:
                 targets_normal.append((0, 0, 0))
                 logger.error(
                     "BUG: shape key name to vertex index to morph normal diffs"
@@ -2665,19 +2661,9 @@ class Vrm0Exporter(AbstractBaseVrmExporter):
                 )
                 continue
 
-            morph_normal_diffs = (
-                shape_key_name_to_vertex_index_to_morph_normal_diffs.get(shape_key_name)
-            )
-            if morph_normal_diffs is None:
-                targets_normal.append((0, 0, 0))
-                continue
-
-            if vertex_index >= len(morph_normal_diffs):
-                targets_normal.append((0, 0, 0))
-                continue
-
-            morph_normal_diff = morph_normal_diffs[vertex_index]
-
+            morph_normal_diff = shape_key_name_to_vertex_index_to_morph_normal_diffs[
+                shape_key_name
+            ][vertex_index]
             # logger.error(
             #     "MORPH_NORMAL_DIFF: %s %s", vertex_index, morph_normal_diff
             # )
@@ -2699,82 +2685,6 @@ class Vrm0Exporter(AbstractBaseVrmExporter):
             targets_position=targets_position,
             targets_normal=targets_normal,
         )
-
-    @staticmethod
-    def tessface_fan(
-        bm: Optional[object], *, export_ext_bmesh_encoding: bool = False
-    ) -> list[tuple[int, tuple[object, ...]]]:
-        """
-        Enhanced triangle fan tessellation for EXT_bmesh_encoding.
-        
-        Supports both standard triangulation and EXT_bmesh_encoding hybrid approach.
-        """
-        if not bm:
-            return []
-            
-        if export_ext_bmesh_encoding:
-            # Use EXT_bmesh_encoding hybrid triangle fan algorithm
-            bmesh_encoder = BmeshEncoder()
-            try:
-                return bmesh_encoder.encode_triangle_fan_implicit(bm)
-            except Exception as e:
-                logger.warning(f"EXT_bmesh_encoding failed, falling back to standard triangulation: {e}")
-        
-        # Standard triangulation fallback
-        return [
-            (loops[0].face.material_index, loops)
-            for loops in bm.calc_loop_triangles()
-            if loops
-        ]
-
-    def mesh_to_bin_and_dict(
-        self,
-        obj: Object,
-        mesh_dicts: list[dict[str, Json]],
-        extensions_used: list[str],
-    ) -> None:
-        """Add EXT_bmesh_encoding extension data to mesh if enabled."""
-        if not self.export_ext_bmesh_encoding:
-            return
-            
-        try:
-            # Create BMesh from object for extension data
-            bmesh_encoder = BmeshEncoder()
-            bm = bmesh_encoder.create_bmesh_from_mesh(obj)
-            if not bm:
-                return
-                
-            # Generate EXT_bmesh_encoding extension data
-            extension_data = bmesh_encoder.encode_bmesh_to_gltf_extension(bm)
-            if not extension_data:
-                bm.free()
-                return
-            
-            # Add extension to mesh dict
-            mesh_name = obj.data.name if obj.data else obj.name
-            mesh_dict = next(
-                (mesh for mesh in mesh_dicts if mesh.get("name") == mesh_name), 
-                None
-            )
-            
-            if mesh_dict and "primitives" in mesh_dict:
-                primitives = mesh_dict["primitives"]
-                if isinstance(primitives, list) and primitives:
-                    # Add extension to first primitive (following FB_ngon_encoding pattern)
-                    primitive = primitives[0]
-                    if isinstance(primitive, dict):
-                        if "extensions" not in primitive:
-                            primitive["extensions"] = {}
-                        primitive["extensions"]["EXT_bmesh_encoding"] = extension_data
-                        
-                        # Add to extensions used
-                        if "EXT_bmesh_encoding" not in extensions_used:
-                            extensions_used.append("EXT_bmesh_encoding")
-            
-            bm.free()
-            
-        except Exception as e:
-            logger.error(f"Failed to add EXT_bmesh_encoding to mesh {obj.name}: {e}")
 
     def write_mesh_node(
         self,
@@ -2799,20 +2709,19 @@ class Vrm0Exporter(AbstractBaseVrmExporter):
         if obj.type not in MESH_CONVERTIBLE_OBJECT_TYPES:
             return None
 
-        have_skin = bool(skin_joints) and self.have_skin(obj)
+        have_skin = self.have_skin(obj)
 
         node_index = len(node_dicts)
         node_dict: dict[str, Json] = {
             "name": obj.name,
-            # TODO: Planned for removal as it's identical to default value
-            "rotation": [0, 0, 0, 1],
-            "scale": [1, 1, 1],
+            "rotation": [0, 0, 0, 1],  # TODO: デフォルト値と同一のため削除予定
+            "scale": [1, 1, 1],  # TODO: デフォルト値と同一のため削除予定
         }
 
         parent_node_index = None
         parent_translation = None
         if have_skin:
-            # Becomes scene root node when there's skin
+            # スキンがある場合はシーンのルートノードになる
             pass
         else:
             if (
@@ -2824,8 +2733,7 @@ class Vrm0Exporter(AbstractBaseVrmExporter):
                 )
                 and parent in self.export_objects
             ):
-                # TODO: Don't restore nested meshes for compatibility, but will
-                # restore in the future
+                # TODO: 互換性のためネストしたメッシュを復元しないが、将来的には復元する
                 # parent_translation = parent.matrix_world.to_translation()
                 # parent_node_index = object_name_to_node_index.get(parent.name)
                 pass
@@ -2881,23 +2789,19 @@ class Vrm0Exporter(AbstractBaseVrmExporter):
             original_shape_keys = original_mesh_convertible.shape_keys
 
         with save_workspace(self.context):
-            main_mesh_data = force_apply_modifiers(
-                self.context, obj, preserve_shape_keys=False
-            )
+            main_mesh_data = force_apply_modifiers(self.context, obj, persistent=False)
             if not main_mesh_data:
                 return scene_node_index
 
-            shape_key_name_to_mesh_data: Optional[dict[str, Mesh]] = None
-            shape_key_name_to_mesh_data = {}
+            shape_key_name_to_mesh_data: dict[str, Mesh] = {}
             if original_shape_keys:
-                # Create mesh with modifiers applied for each shape key.
-                # This is because for VRM 0.x, glTF Node rotation and scale
-                # are normalized, but when rotation or scale is applied in
-                # pose mode, the weight calculation for that normalization is
-                # not applied to shape keys, so we need to recalculate the
-                # change amount for each shape key ourselves.
-                # There might be bad patterns where vertex indices change,
-                # so there's room for improvement.
+                # シェイプキーごとにモディファイアを適用したメッシュを作成する。
+                # これは、VRM 0.x用にglTF Nodeの回転やスケールを正規化するが、
+                # ポーズモードで回転やスケールをつけた場合、その正規化のウエイト
+                # 計算がシェイプキーに適用されないため、シェイプキーごとの変化量を
+                # 自前で計算しなおす必要があるため。
+                # 頂点のインデックスなどが変わる可能性があるためダメなパターンも
+                # あると思うので、改善の余地あり。
                 for shape_key in original_shape_keys.key_blocks:
                     if original_shape_keys.reference_key.name == shape_key.name:
                         continue
@@ -2905,7 +2809,7 @@ class Vrm0Exporter(AbstractBaseVrmExporter):
                     shape_key.value = 1.0
                     self.context.view_layer.update()
                     shape_mesh = force_apply_modifiers(
-                        self.context, obj, preserve_shape_keys=False
+                        self.context, obj, persistent=False
                     )
                     shape_key.value = 0.0
                     self.context.view_layer.update()
@@ -2917,7 +2821,7 @@ class Vrm0Exporter(AbstractBaseVrmExporter):
         obj.hide_viewport = False
         obj.hide_select = False
 
-        # TODO: Executing move for compatibility with old addon, but seems unnecessary
+        # TODO: 古いアドオンとの互換性のために移動を実行しているが、不要な気がする
         mesh_data_transform = Matrix.Identity(4)
         if not have_skin:
             mesh_data_transform @= Matrix.Translation(
@@ -2989,34 +2893,9 @@ class Vrm0Exporter(AbstractBaseVrmExporter):
 
         uv_layers = main_mesh_data.uv_layers
         uv_layer = uv_layers.active
-        
-        # Use EXT_bmesh_encoding tessface_fan if enabled, otherwise standard triangulation
-        if self.export_ext_bmesh_encoding:
-            # Create BMesh for enhanced triangle fan processing
-            import bmesh
-            bm = bmesh.new()
-            try:
-                bm.from_mesh(main_mesh_data)
-                triangulated_faces = self.tessface_fan(bm, export_ext_bmesh_encoding=True)
-            except Exception as e:
-                logger.warning(f"EXT_bmesh_encoding tessellation failed: {e}")
-                main_mesh_data.calc_loop_triangles()
-                triangulated_faces = [
-                    (loop_triangle.material_index, tuple(main_mesh_data.loops[i] for i in loop_triangle.loops))
-                    for loop_triangle in main_mesh_data.loop_triangles
-                ]
-            finally:
-                bm.free()
-        else:
-            # Standard triangulation
-            main_mesh_data.calc_loop_triangles()
-            triangulated_faces = [
-                (loop_triangle.material_index, tuple(main_mesh_data.loops[i] for i in loop_triangle.loops))
-                for loop_triangle in main_mesh_data.loop_triangles
-            ]
-        
-        # Process triangulated faces (works for both EXT_bmesh_encoding and standard)
-        for material_slot_index, loops in triangulated_faces:
+        main_mesh_data.calc_loop_triangles()
+        for loop_triangle in main_mesh_data.loop_triangles:
+            material_slot_index = loop_triangle.material_index
             material_name = material_slot_index_to_material_name.get(
                 material_slot_index
             )
@@ -3036,18 +2915,8 @@ class Vrm0Exporter(AbstractBaseVrmExporter):
                 vertex_indices = bytearray()
                 material_index_to_vertex_indices[material_index] = vertex_indices
 
-            for loop in loops:
-                # Find loop index by searching through all loops
-                loop_index = None
-                for i, mesh_loop in enumerate(main_mesh_data.loops):
-                    if mesh_loop == loop:
-                        loop_index = i
-                        break
-                
-                if loop_index is None:
-                    # Fallback: use vertex index as approximation
-                    loop_index = loop.vertex_index
-                
+            for loop_index in loop_triangle.loops:
+                loop = main_mesh_data.loops[loop_index]
                 original_vertex_index = loop.vertex_index
                 vertex_index = self.collect_vertex(
                     obj,
@@ -3067,18 +2936,6 @@ class Vrm0Exporter(AbstractBaseVrmExporter):
 
                 vertex_indices.extend(vertex_indices_struct.pack(vertex_index))
 
-        for temporary_mesh in [main_mesh_data, *shape_key_name_to_mesh_data.values()]:
-            if temporary_mesh.users:
-                logger.warning(
-                    'Failed to remove "%s" with %d users while exporting meshes',
-                    temporary_mesh.name,
-                    temporary_mesh.users,
-                )
-                continue
-            self.context.blend_data.meshes.remove(temporary_mesh)
-        main_mesh_data = None
-        shape_key_name_to_mesh_data = None
-
         if not material_index_to_vertex_indices:
             return scene_node_index
 
@@ -3089,9 +2946,9 @@ class Vrm0Exporter(AbstractBaseVrmExporter):
         while len(buffer0) % 4:
             buffer0.append(0)
 
-        # TODO: Make buffer writing class independent
+        # TODO: buffer書き込み用のクラスを独立
 
-        # Write indices
+        # indicesの書き込み
         for (
             primitive_material_index,
             vertex_indices,
@@ -3113,7 +2970,7 @@ class Vrm0Exporter(AbstractBaseVrmExporter):
                     "byteOffset": 0,
                     "type": "SCALAR",
                     "componentType": GL_UNSIGNED_INT,
-                    # TODO: Avoid division as it can lead to mistakes
+                    # TODO: 割り算はミスを誘うので避ける
                     "count": int(len(vertex_indices) / 4),
                 }
             )
@@ -3124,7 +2981,7 @@ class Vrm0Exporter(AbstractBaseVrmExporter):
                 }
             )
 
-        # Made attributes shared by design
+        # attributesは共有する仕様にした
         primitive_attribute_dict: dict[str, Json] = {}
         for primitive_dict in primitive_dicts:
             primitive_dict["attributes"] = primitive_attribute_dict
@@ -3180,7 +3037,7 @@ class Vrm0Exporter(AbstractBaseVrmExporter):
                 "type": "VEC3",
                 "componentType": GL_FLOAT,
                 "count": vertex_attributes_and_targets.count,
-                # "normalized": True, # TODO: Needs investigation
+                # "normalized": True, # TODO: 要調査
             }
         )
         primitive_attribute_dict["NORMAL"] = normal_accessor_index
@@ -3260,7 +3117,7 @@ class Vrm0Exporter(AbstractBaseVrmExporter):
             )
             primitive_attribute_dict["WEIGHTS_0"] = weights_accessor_index
 
-        # Made targets shared by design
+        # targetsは共有する仕様にした
         primitive_targets = vertex_attributes_and_targets.targets
         if primitive_targets:
             while len(buffer0) % 4:
@@ -3331,25 +3188,20 @@ class Vrm0Exporter(AbstractBaseVrmExporter):
             for primitive_dict in primitive_dicts:
                 primitive_dict["targets"] = make_json(primitive_target_dicts)
                 primitive_dict["extras"] = {
-                    # targetNames is not included in glTF specification, but is used
-                    # in many implementations
+                    # targetNamesはglTFの仕様には含まれないが、多くの実装で使われている
                     # https://github.com/KhronosGroup/glTF/blob/0251c5c0cce8daec69bd54f29f891e3d0cdb52c8/specification/2.0/Specification.adoc?plain=1#L1500-L1504
                     "targetNames": [target.name for target in primitive_targets]
                 }
 
-        mesh_dict = {
-            "name": original_mesh_convertible.name,
-            "primitives": make_json(primitive_dicts),
-        }
-        mesh_dicts.append(mesh_dict)
-        
-        # Add EXT_bmesh_encoding extension data to mesh if enabled
-        if self.export_ext_bmesh_encoding:
-            self.mesh_to_bin_and_dict(obj, mesh_dicts, extensions_used)
-        
+        mesh_dicts.append(
+            {
+                "name": original_mesh_convertible.name,
+                "primitives": make_json(primitive_dicts),
+            }
+        )
         mesh_object_name_to_mesh_index[obj.name] = mesh_index
         if skin_dict and have_skin:
-            # TODO: Create separate skin for each mesh
+            # TODO: メッシュごとに別々のskinを作る
             node_dict["skin"] = len(skin_dicts)
             skin_dicts.append(dict(skin_dict))
 
@@ -3390,12 +3242,12 @@ class Vrm0Exporter(AbstractBaseVrmExporter):
         node_indices: list[int] = []
 
         mesh_convertible_objects = [
-            mesh_object
-            for mesh_object in self.export_objects
-            if mesh_object.type in search.MESH_CONVERTIBLE_OBJECT_TYPES
+            meshe_object
+            for meshe_object in self.export_objects
+            if meshe_object.type in search.MESH_CONVERTIBLE_OBJECT_TYPES
         ]
 
-        # Sort meshes according to parent-child relationships
+        # メッシュを親子関係に従ってソート
         while True:
             swapped = False
             for mesh_object in list(mesh_convertible_objects):
@@ -3454,12 +3306,10 @@ class Vrm0Exporter(AbstractBaseVrmExporter):
             raise TypeError(message)
         return armature_data
 
-    @staticmethod
-    def enter_clear_shape_key_values(
-        context: Context, export_objects: Sequence[Object]
-    ) -> Mapping[tuple[str, str], float]:
+    @contextmanager
+    def clear_shape_key_values(self) -> Iterator[dict[tuple[str, str], float]]:
         mesh_name_and_shape_key_name_to_value: dict[tuple[str, str], float] = {}
-        mesh_objs = [obj for obj in export_objects if obj.type == "MESH"]
+        mesh_objs = [obj for obj in self.export_objects if obj.type == "MESH"]
         for mesh_obj in mesh_objs:
             mesh = mesh_obj.data
             if not isinstance(mesh, Mesh):
@@ -3473,43 +3323,24 @@ class Vrm0Exporter(AbstractBaseVrmExporter):
                     key_block.value
                 )
                 key_block.value = 0
-        context.view_layer.update()
-        return mesh_name_and_shape_key_name_to_value
-
-    @staticmethod
-    def leave_clear_shape_key_values(
-        context: Context,
-        mesh_name_and_shape_key_name_to_value: Mapping[tuple[str, str], float],
-    ) -> None:
-        for (
-            mesh_name,
-            shape_key_name,
-        ), value in mesh_name_and_shape_key_name_to_value.items():
-            mesh = context.blend_data.meshes.get(mesh_name)
-            if not mesh:
-                continue
-            shape_keys = mesh.shape_keys
-            if not shape_keys:
-                continue
-            key_block = shape_keys.key_blocks.get(shape_key_name)
-            if not key_block:
-                continue
-            key_block.value = value
-
-    @contextmanager
-    def clear_shape_key_values(self) -> Iterator[Mapping[tuple[str, str], float]]:
-        mesh_name_and_shape_key_name_to_value = self.enter_clear_shape_key_values(
-            self.context, self.export_objects
-        )
+        self.context.view_layer.update()
         try:
             yield mesh_name_and_shape_key_name_to_value
-            # After yield, bpy native objects may be deleted or frames may advance
-            # making them invalid. Accessing them in this state can cause crashes,
-            # so be careful not to access potentially invalid native objects after yield
         finally:
-            self.leave_clear_shape_key_values(
-                self.context, mesh_name_and_shape_key_name_to_value
-            )
+            for (
+                mesh_name,
+                shape_key_name,
+            ), value in mesh_name_and_shape_key_name_to_value.items():
+                mesh = self.context.blend_data.meshes.get(mesh_name)
+                if not mesh:
+                    continue
+                shape_keys = mesh.shape_keys
+                if not shape_keys:
+                    continue
+                key_block = shape_keys.key_blocks.get(shape_key_name)
+                if not key_block:
+                    continue
+                key_block.value = value
 
     def get_legacy_shader_images(self, material: Material) -> Sequence[Image]:
         node, legacy_shader_name = search.legacy_shader_node(material)
@@ -3585,7 +3416,7 @@ class Vrm0Exporter(AbstractBaseVrmExporter):
 
             return [image]
 
-        return list(dict.fromkeys(images).keys())  # Remove duplicates
+        return list(dict.fromkeys(images).keys())  # 重複削除
 
     def create_gltf2_io_texture(
         self,
@@ -3631,7 +3462,7 @@ class Vrm0Exporter(AbstractBaseVrmExporter):
                 r"^BlenderVrmAddonImport[0-9]+Image[0-9]+_", "", source_name
             )
 
-            # Avoid duplicate naming for compatibility with old exporter
+            # 旧エクスポーターとの互換性のため、重複した命名を避ける
             image_name = image_base_name
             for count in range(100000):
                 if count:
@@ -3710,16 +3541,12 @@ class Vrm0Exporter(AbstractBaseVrmExporter):
 
         texture_info: dict[str, Json] = {"index": texture_index}
 
-        texture_info_scale = convert.float_or_none(
-            getattr(gltf2_io_texture_info, "scale", None)
-        )
-        if texture_info_scale is not None:
+        texture_info_scale = getattr(gltf2_io_texture_info, "scale", None)
+        if isinstance(texture_info_scale, (int, float)):
             texture_info["scale"] = texture_info_scale
 
-        texture_info_strength = convert.float_or_none(
-            getattr(gltf2_io_texture_info, "strength", None)
-        )
-        if texture_info_strength is not None:
+        texture_info_strength = getattr(gltf2_io_texture_info, "strength", None)
+        if isinstance(texture_info_strength, (int, float)):
             texture_info["strength"] = texture_info_strength
 
         return make_json(texture_info)
@@ -3843,8 +3670,7 @@ class Vrm0Exporter(AbstractBaseVrmExporter):
         reference_key_name: str,
     ) -> Mapping[str, tuple[tuple[float, float, float], ...]]:
         # logger.error("CREATE UNIQ:")
-        # Collect vertex indices where normal difference is forced to zero
-        # setting is enabled
+        # 法線の差分を強制的にゼロにする設定が有効な頂点インデックスを集める
         exclusion_vertex_indices: set[int] = set()
         for polygon in mesh_data.polygons:
             if not (0 <= polygon.material_index < len(mesh_data.materials)):
@@ -3872,14 +3698,14 @@ class Vrm0Exporter(AbstractBaseVrmExporter):
 
         # logger.error("KEY DIFF:")
 
-        # Collect normal values for each shape key
+        # シェイプキーごとの法線の値を集める
         shape_key_name_to_vertex_normal_vectors: dict[str, list[Vector]] = {}
         for shape_key_name, shape_key_mesh_data in [
             (reference_key_name, mesh_data),
             *shape_key_name_to_mesh_data.items(),
         ]:
             # logger.error("  refkey=%s key=%s", reference_key_name, shape_key_name)
-            # Use split (loop) normals instead of vertex normals
+            # 頂点のノーマルではなくsplit(loop)のノーマルを使う
             # https://github.com/KhronosGroup/glTF-Blender-IO/pull/1129
             vertex_normal_sum_vectors = [Vector([0.0, 0.0, 0.0])] * len(
                 mesh_data.vertices
@@ -3901,8 +3727,7 @@ class Vrm0Exporter(AbstractBaseVrmExporter):
                         # logger.error("      OUT OF RANGE")
                         continue
                     vertex_normal_sum_vectors[vertex_index] = (
-                        # Normally we would use the += operator, but for some
-                        # reason the result changes so we don't use it
+                        # 普通は += 演算子を使うが、なぜか結果が変わるので使わない
                         vertex_normal_sum_vectors[vertex_index] + Vector(normal)
                     )
                     # logger.error(
@@ -3921,7 +3746,7 @@ class Vrm0Exporter(AbstractBaseVrmExporter):
             reference_key_name
         ]
 
-        # Collect normal differences from reference key for each shape key
+        # シェイプキーごとに、リファレンスキーとの法線の差分を集める
         shape_key_name_to_vertex_index_to_morph_normal_diffs: dict[
             str, tuple[tuple[float, float, float], ...]
         ] = {}
@@ -3966,8 +3791,8 @@ class Vrm0Exporter(AbstractBaseVrmExporter):
         return shape_key_name_to_vertex_index_to_morph_normal_diffs
 
     def have_skin(self, mesh: Object) -> bool:
-        # TODO: This method has false positives but is kept as-is for compatibility.
-        # In the future, this will be replaced with correct implementation
+        # TODO: このメソッドは誤判定があるが互換性のためにそのままになっている。
+        # 将来的には正しい実装に置き換わる
         while mesh:
             if any(
                 modifier.show_viewport and modifier.type == "ARMATURE"

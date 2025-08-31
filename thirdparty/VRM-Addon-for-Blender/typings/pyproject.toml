@@ -1,20 +1,19 @@
 [project]
 name = "starry-bpy-typings"
-version = "3.11.4"
+version = "1.0.0"
 readme = "README.md"
 
-[tool.uv.build-backend]
-module-name = [
-  "addon_utils-stubs",
-  "bgl-stubs",
-  "bmesh-stubs",
-  "bpy-stubs",
-  "bpy_extras-stubs",
-  "gpu-stubs",
-  "gpu_extras-stubs",
-  "io_scene_gltf2-stubs",
-  "idprop-stubs",
-  "mathutils-stubs",
+[tool.hatch.build.targets.wheel]
+packages = [
+    "addon_utils-stubs",
+    "bgl-stubs",
+    "bmesh-stubs",
+    "bpy-stubs",
+    "bpy_extras-stubs",
+    "gpu-stubs",
+    "gpu_extras-stubs",
+    "idprop-stubs",
+    "mathutils-stubs",
 ]
 
 [tool.ruff]
@@ -22,20 +21,21 @@ extend = "../pyproject.toml"
 
 [tool.ruff.lint]
 extend-ignore = [
-  # ----- ignored -----
+    # ----- ignored -----
 
-  "A001", # Variable `x` is shadowing a Python builtin
-  "A002", # Argument `x` is shadowing a Python builtin
-  "A004", # Import `x` is shadowing a Python builtin
-  "FBT001", # Boolean-typed positional argument in function definition
-  "FBT002", # Boolean default positional argument in function definition
-  "N801", # Class name `x` should use CapWords convention
-  "N802", # Function name `X` should be lowercase
+    "A001", # Variable `x` is shadowing a Python builtin
+    "A002", # Argument `x` is shadowing a Python builtin
+    "A004", # Import `x` is shadowing a Python builtin
+    "FBT001", # Boolean-typed positional argument in function definition
+    "FBT002", # Boolean default positional argument in function definition
+    "N801", # Class name `x` should use CapWords convention
+    "N802", # Function name `X` should be lowercase
+    "UP007", # Use `X | Y` for type annotations
 ]
 
 [tool.ruff.lint.pylint]
 max-args = 80
 
 [build-system]
-requires = ["uv_build>=0.8.4,<0.9.0"]
-build-backend = "uv_build"
+requires = ["hatchling"]
+build-backend = "hatchling.build"
