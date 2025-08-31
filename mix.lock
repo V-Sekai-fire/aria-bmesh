@@ -1,6 +1,9 @@
 %{
   "aria_core": {:git, "https://github.com/V-Sekai-fire/aria-hybrid-planner.git", "955a420f9afc5b7449737307a2a539345a60ddd0", [sparse: "apps/aria_core"]},
+  "aria_gltf": {:git, "https://github.com/V-Sekai-fire/aria-character-core.git", "2a71762a15dd5fae3cfd14c33e3e6631930d5032", [sparse: "apps/aria_gltf"]},
   "aria_hybrid_planner": {:git, "https://github.com/V-Sekai-fire/aria-hybrid-planner.git", "14b3c86faae05cfd408d4ef301a666786ee5a2c9", []},
+  "aria_joint": {:git, "https://github.com/V-Sekai-fire/aria-character-core.git", "2a71762a15dd5fae3cfd14c33e3e6631930d5032", [sparse: "apps/aria_joint"]},
+  "aria_math": {:git, "https://github.com/V-Sekai-fire/aria-math.git", "cbd3af559ed7d45165a38b69133226f6e5150277", []},
   "aria_state": {:git, "https://github.com/V-Sekai-fire/aria-hybrid-planner.git", "955a420f9afc5b7449737307a2a539345a60ddd0", [sparse: "apps/aria_state"]},
   "certifi": {:hex, :certifi, "2.15.0", "0e6e882fcdaaa0a5a9f2b3db55b1394dba07e8d6d9bcad08318fb604c6839712", [:rebar3], [], "hexpm", "b147ed22ce71d72eafdad94f055165c1c182f61a2ff49df28bcc71d1d5b94a60"},
   "combine": {:hex, :combine, "0.10.0", "eff8224eeb56498a2af13011d142c5e7997a80c8f5b97c499f84c841032e429f", [:mix], [], "hexpm", "1b1dbc1790073076580d0d1d64e42eae2366583e7aecd455d1215b0d16f2451b"},
