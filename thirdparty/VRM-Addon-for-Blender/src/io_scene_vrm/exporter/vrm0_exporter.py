@@ -74,7 +74,6 @@ from .abstract_base_vrm_exporter import (
     assign_dict,
     force_apply_modifiers,
 )
-from ..editor.bmesh_encoding.encoding import BmeshEncoder
 
 logger = get_logger(__name__)
 
@@ -92,11 +91,8 @@ class Vrm0Exporter(AbstractBaseVrmExporter):
         context: Context,
         export_objects: list[Object],
         armature: Object,
-        *,
-        export_ext_bmesh_encoding: bool = False,
     ) -> None:
         super().__init__(context, export_objects, armature)
-        self.export_ext_bmesh_encoding = export_ext_bmesh_encoding
 
     @dataclass
     class PrimitiveTarget:
@@ -2685,46 +2681,30 @@ class Vrm0Exporter(AbstractBaseVrmExporter):
         )
 
     @staticmethod
-    def tessface_fan(
-        bm: Optional[object], *, export_ext_bmesh_encoding: bool = False
-    ) -> list[tuple[int, tuple[object, ...]]]:
+    def tessface_fan(bm: Optional[object]) -> list[tuple[int, tuple[object, ...]]]:
         """
-        Enhanced triangle fan tessellation for EXT_bmesh_encoding.
+        Standard triangulation for VRM 0.x export.
         
-        Uses buffer-based BMesh encoding for topology preservation with
-        improved error handling and fallback mechanisms.
+        VRM 0.x uses standard triangulation only. EXT_bmesh_encoding
+        topology preservation is only available in VRM 1.x.
         """
         if not bm:
             logger.debug("No BMesh provided for tessellation")
             return []
-            
-        if export_ext_bmesh_encoding:
-            # Use EXT_bmesh_encoding buffer-based triangle fan algorithm
-            bmesh_encoder = BmeshEncoder()
-            try:
-                logger.debug(f"Attempting EXT_bmesh_encoding triangle fan for mesh with {len(bm.faces)} faces")
-                result = bmesh_encoder.encode_triangle_fan_implicit(bm)
-                if result:
-                    logger.info(f"EXT_bmesh_encoding triangle fan successful: {len(result)} triangles")
-                    return result
-                else:
-                    logger.warning("EXT_bmesh_encoding triangle fan returned empty result")
-            except Exception as e:
-                logger.error(f"EXT_bmesh_encoding triangle fan failed: {e}", exc_info=True)
         
-        # Standard triangulation fallback
-        logger.debug("Using standard triangulation fallback")
+        # VRM 0.x: Use standard triangulation only
+        logger.debug("Using standard triangulation for VRM 0.x")
         try:
             bm.calc_loop_triangles()
-            standard_result = [
+            result = [
                 (loop_triangle.material_index, tuple(bm.loops[i] for i in loop_triangle.loops))
                 for loop_triangle in bm.loop_triangles
                 if loop_triangle.loops
             ]
-            logger.debug(f"Standard triangulation completed: {len(standard_result)} triangles")
-            return standard_result
+            logger.debug(f"Standard triangulation completed: {len(result)} triangles")
+            return result
         except Exception as e:
-            logger.error(f"Standard triangulation also failed: {e}")
+            logger.error(f"Triangulation failed: {e}")
             return []
 
 
@@ -2936,30 +2916,12 @@ class Vrm0Exporter(AbstractBaseVrmExporter):
         uv_layers = main_mesh_data.uv_layers
         uv_layer = uv_layers.active
         
-        # Use EXT_bmesh_encoding tessface_fan if enabled, otherwise standard triangulation
-        if self.export_ext_bmesh_encoding:
-            # Create BMesh for enhanced triangle fan processing
-            import bmesh
-            bm = bmesh.new()
-            try:
-                bm.from_mesh(main_mesh_data)
-                triangulated_faces = self.tessface_fan(bm, export_ext_bmesh_encoding=True)
-            except Exception as e:
-                logger.warning(f"EXT_bmesh_encoding tessellation failed: {e}")
-                main_mesh_data.calc_loop_triangles()
-                triangulated_faces = [
-                    (loop_triangle.material_index, tuple(main_mesh_data.loops[i] for i in loop_triangle.loops))
-                    for loop_triangle in main_mesh_data.loop_triangles
-                ]
-            finally:
-                bm.free()
-        else:
-            # Standard triangulation
-            main_mesh_data.calc_loop_triangles()
-            triangulated_faces = [
-                (loop_triangle.material_index, tuple(main_mesh_data.loops[i] for i in loop_triangle.loops))
-                for loop_triangle in main_mesh_data.loop_triangles
-            ]
+        # VRM 0.x: Use standard triangulation only
+        main_mesh_data.calc_loop_triangles()
+        triangulated_faces = [
+            (loop_triangle.material_index, tuple(main_mesh_data.loops[i] for i in loop_triangle.loops))
+            for loop_triangle in main_mesh_data.loop_triangles
+        ]
         
         # Process triangulated faces (works for both EXT_bmesh_encoding and standard)
         for material_slot_index, loops in triangulated_faces:
@@ -3270,28 +3232,7 @@ class Vrm0Exporter(AbstractBaseVrmExporter):
                     "targetNames": [target.name for target in primitive_targets]
                 }
 
-        # Add EXT_bmesh_encoding extension data BEFORE creating final mesh dict
-        if self.export_ext_bmesh_encoding:
-            try:
-                bmesh_encoder = BmeshEncoder()
-                bm = bmesh_encoder.create_bmesh_from_mesh(obj)
-                if bm:
-                    raw_extension_data = bmesh_encoder.encode_bmesh_to_gltf_extension(bm)
-                    if raw_extension_data:
-                        full_json_dict = {"bufferViews": buffer_view_dicts, "accessors": accessor_dicts}
-                        extension_data = bmesh_encoder.create_buffer_views(full_json_dict, buffer0, raw_extension_data)
-                        if extension_data and primitive_dicts:
-                            primitive = primitive_dicts[0]
-                            if "extensions" not in primitive:
-                                primitive["extensions"] = {}
-                            primitive["extensions"]["EXT_bmesh_encoding"] = extension_data
-                            if "EXT_bmesh_encoding" not in extensions_used:
-                                extensions_used.append("EXT_bmesh_encoding")
-                            logger.info(f"Added EXT_bmesh_encoding to {obj.name}")
-                    bm.free()
-            except Exception as e:
-                logger.error(f"Failed to add EXT_bmesh_encoding to {obj.name}: {e}")
-
+        # VRM 0.x: No EXT_bmesh_encoding support (available only in VRM 1.x)
         mesh_dict = {
             "name": original_mesh_convertible.name,
             "primitives": make_json(primitive_dicts),
@@ -3992,32 +3933,6 @@ class Vrm0Exporter(AbstractBaseVrmExporter):
             mesh = parent_mesh
         return True
 
-    def _adjust_buffer_view_indices(self, extension_data: dict, offset: int) -> dict:
-        """Adjust buffer view indices in extension data to account for existing buffer views."""
-        adjusted_data = {}
-        
-        for component_name, component_data in extension_data.items():
-            if isinstance(component_data, dict):
-                adjusted_component = component_data.copy()
-                
-                # Adjust buffer view indices for each property
-                for prop_name, prop_value in component_data.items():
-                    if isinstance(prop_value, int) and prop_name in ["positions", "vertices", "faces", "topology", "normals", "offsets"]:
-                        adjusted_component[prop_name] = prop_value + offset
-                    elif prop_name == "attributes" and isinstance(prop_value, dict):
-                        adjusted_attributes = {}
-                        for attr_name, attr_index in prop_value.items():
-                            if isinstance(attr_index, int):
-                                adjusted_attributes[attr_name] = attr_index + offset
-                            else:
-                                adjusted_attributes[attr_name] = attr_index
-                        adjusted_component["attributes"] = adjusted_attributes
-                
-                adjusted_data[component_name] = adjusted_component
-            else:
-                adjusted_data[component_name] = component_data
-        
-        return adjusted_data
 
     def get_asset_generator(self) -> str:
         addon_version = get_addon_version()

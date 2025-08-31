@@ -2720,7 +2720,7 @@ class Vrm1Exporter(AbstractBaseVrmExporter):
         # Add EXT_bmesh_encoding support for VRM 1.0
         if self.export_ext_bmesh_encoding:
             self.add_ext_bmesh_encoding_to_meshes(
-                json_dict, object_name_to_index_dict
+                json_dict, buffer0, object_name_to_index_dict
             )
 
         extensions_used = json_dict.get("extensionsUsed")
@@ -2855,6 +2855,7 @@ class Vrm1Exporter(AbstractBaseVrmExporter):
     def add_ext_bmesh_encoding_to_meshes(
         self,
         json_dict: dict[str, Json],
+        buffer0: bytearray,
         object_name_to_index_dict: Mapping[str, int],
     ) -> None:
         """Add EXT_bmesh_encoding extension data to meshes for VRM 1.0."""
@@ -2867,11 +2868,6 @@ class Vrm1Exporter(AbstractBaseVrmExporter):
             if not isinstance(extensions_used, list):
                 extensions_used = []
                 json_dict["extensionsUsed"] = extensions_used
-
-            # Ensure buffer0 exists
-            buffer0_bytes = json_dict.get("buffers", [{}])[0].get("byteLength", 0)
-            if "buffers" not in json_dict:
-                json_dict["buffers"] = [{"byteLength": 0}]
 
             bmesh_encoder = BmeshEncoder()
 
@@ -2893,9 +2889,6 @@ class Vrm1Exporter(AbstractBaseVrmExporter):
                         continue
 
                     # Create buffer views and get final extension data
-                    # Note: This requires access to the main buffer, which should be handled
-                    # by the calling exporter that has access to buffer0
-                    buffer0 = bytearray()  # Temporary - should be passed from caller
                     extension_data = bmesh_encoder.create_buffer_views(json_dict, buffer0, raw_extension_data)
                     
                     if not extension_data:
@@ -2905,7 +2898,7 @@ class Vrm1Exporter(AbstractBaseVrmExporter):
                     mesh_name = obj.data.name if obj.data else obj.name
                     mesh_dict = next(
                         (mesh for mesh in mesh_dicts if mesh.get("name") == mesh_name),
-                        None
+                        None,
                     )
 
                     if mesh_dict and "primitives" in mesh_dict:
@@ -2921,6 +2914,8 @@ class Vrm1Exporter(AbstractBaseVrmExporter):
                                 # Add to extensions used
                                 if "EXT_bmesh_encoding" not in extensions_used:
                                     extensions_used.append("EXT_bmesh_encoding")
+
+                                logger.info(f"Added EXT_bmesh_encoding to mesh '{mesh_name}' in VRM 1.0")
 
                 finally:
                     bm.free()
