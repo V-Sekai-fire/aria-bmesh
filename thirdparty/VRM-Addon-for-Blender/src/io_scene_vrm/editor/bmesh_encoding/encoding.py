@@ -1107,6 +1107,381 @@ class BmeshEncoder:
         return triangles
 
     @staticmethod
+    def create_mesh_data_from_object(mesh_obj: bpy.types.Object) -> Optional[bpy.types.Mesh]:
+        """Create native mesh data from Blender mesh object - more stable than BMesh."""
+        if mesh_obj.type != 'MESH' or not mesh_obj.data:
+            return None
+        
+        try:
+            # Use evaluated mesh for accurate geometry
+            depsgraph = bpy.context.evaluated_depsgraph_get()
+            eval_obj = mesh_obj.evaluated_get(depsgraph)
+            return eval_obj.data
+        except Exception as e:
+            logger.error(f"Failed to get mesh data from {mesh_obj.name}: {e}")
+            return None
+
+    def encode_mesh_to_gltf_extension_native(self, mesh: bpy.types.Mesh) -> Dict[str, Any]:
+        """
+        Encode native mesh data to EXT_bmesh_encoding extension data.
+        
+        Uses Blender's stable native mesh APIs instead of BMesh to avoid
+        BMLoopSeq compatibility issues.
+        """
+        if not mesh.vertices or not mesh.polygons:
+            return {}
+
+        logger.info(f"Encoding mesh '{mesh.name}' using native mesh data approach")
+        logger.info(f"Mesh has {len(mesh.vertices)} vertices, {len(mesh.edges)} edges, {len(mesh.polygons)} polygons, {len(mesh.loops)} loops")
+
+        extension_data = {}
+
+        # Encode vertices using native mesh data
+        vertex_data = self._encode_vertices_native(mesh)
+        if vertex_data:
+            extension_data["vertices"] = vertex_data
+
+        # Encode edges using native mesh data
+        edge_data = self._encode_edges_native(mesh)
+        if edge_data:
+            extension_data["edges"] = edge_data
+
+        # Encode loops using native mesh data
+        loop_data = self._encode_loops_native(mesh)
+        if loop_data:
+            extension_data["loops"] = loop_data
+
+        # Encode faces using native mesh data
+        face_data = self._encode_faces_native(mesh)
+        if face_data:
+            extension_data["faces"] = face_data
+
+        logger.info(f"Native encoding complete for mesh '{mesh.name}', extension data keys: {list(extension_data.keys())}")
+        return extension_data
+
+    def _encode_vertices_native(self, mesh: bpy.types.Mesh) -> Dict[str, Any]:
+        """Encode vertex data using native mesh APIs."""
+        if not mesh.vertices:
+            return {}
+
+        vertex_count = len(mesh.vertices)
+        
+        # Create position data (required by schema)
+        positions_buffer = bytearray()
+        position_struct = struct.Struct("<fff")
+        
+        # Create edge adjacency data (optional per schema)
+        edges_buffer = bytearray()
+        edge_index_struct = struct.Struct("<I")
+        
+        # Build vertex-to-edge adjacency using native APIs
+        vertex_edge_map = {}
+        for edge in mesh.edges:
+            v1, v2 = edge.vertices
+            if v1 not in vertex_edge_map:
+                vertex_edge_map[v1] = []
+            if v2 not in vertex_edge_map:
+                vertex_edge_map[v2] = []
+            vertex_edge_map[v1].append(edge.index)
+            vertex_edge_map[v2].append(edge.index)
+
+        for vertex in mesh.vertices:
+            # Pack vertex position (Vec3<f32> as required by schema)
+            positions_buffer.extend(position_struct.pack(*vertex.co))
+            
+            # Pack vertex-edge adjacency data
+            adjacent_edges = vertex_edge_map.get(vertex.index, [])
+            for edge_idx in adjacent_edges:
+                edges_buffer.extend(edge_index_struct.pack(edge_idx))
+
+        result = {
+            "count": vertex_count,
+            "positions": {
+                "data": positions_buffer,
+                "target": "ARRAY_BUFFER",
+                "componentType": 5126,  # GL_FLOAT
+                "type": "VEC3",
+                "count": vertex_count
+            }
+        }
+        
+        # Add edges buffer if there's adjacency data
+        if edges_buffer:
+            result["edges"] = {
+                "data": edges_buffer,
+                "target": "ARRAY_BUFFER",
+                "componentType": 5125,  # GL_UNSIGNED_INT
+                "type": "SCALAR"
+            }
+        
+        return result
+
+    def _encode_edges_native(self, mesh: bpy.types.Mesh) -> Dict[str, Any]:
+        """Encode edge data using native mesh APIs."""
+        if not mesh.edges:
+            return {}
+
+        edge_count = len(mesh.edges)
+        
+        # Create edge vertex pairs (required: 2×u32 per edge)
+        vertices_buffer = bytearray()
+        vertex_pair_struct = struct.Struct("<II")
+        
+        # Create face adjacency data (optional)
+        faces_buffer = bytearray()
+        face_index_struct = struct.Struct("<I")
+        
+        # Create manifold flags (optional: u8 per edge)
+        manifold_buffer = bytearray()
+        manifold_struct = struct.Struct("<B")
+        
+        # Build edge-to-face adjacency using native APIs
+        edge_face_map = {}
+        for poly in mesh.polygons:
+            for edge_key in poly.edge_keys:
+                # Find edge index for this edge key
+                for edge in mesh.edges:
+                    if (edge.vertices[0], edge.vertices[1]) == edge_key or (edge.vertices[1], edge.vertices[0]) == edge_key:
+                        if edge.index not in edge_face_map:
+                            edge_face_map[edge.index] = []
+                        edge_face_map[edge.index].append(poly.index)
+                        break
+
+        for edge in mesh.edges:
+            # Pack edge vertices (required by schema)
+            vertices_buffer.extend(vertex_pair_struct.pack(
+                edge.vertices[0], 
+                edge.vertices[1]
+            ))
+            
+            # Pack face adjacency data
+            adjacent_faces = edge_face_map.get(edge.index, [])
+            for face_idx in adjacent_faces:
+                faces_buffer.extend(face_index_struct.pack(face_idx))
+            
+            # Pack manifold status (0=non-manifold, 1=manifold, 255=unknown)
+            manifold_status = len(adjacent_faces) == 2
+            if manifold_status:
+                manifold_buffer.extend(manifold_struct.pack(1))
+            elif len(adjacent_faces) != 2:
+                manifold_buffer.extend(manifold_struct.pack(0))
+            else:
+                manifold_buffer.extend(manifold_struct.pack(255))  # Unknown
+
+        result = {
+            "count": edge_count,
+            "vertices": {
+                "data": vertices_buffer,
+                "target": "ELEMENT_ARRAY_BUFFER",
+                "componentType": 5125,  # GL_UNSIGNED_INT
+                "type": "VEC2",
+                "count": edge_count
+            }
+        }
+        
+        # Add optional face adjacency data
+        if faces_buffer:
+            result["faces"] = {
+                "data": faces_buffer,
+                "target": "ARRAY_BUFFER",
+                "componentType": 5125,  # GL_UNSIGNED_INT
+                "type": "SCALAR"
+            }
+        
+        # Add optional manifold flags
+        if manifold_buffer:
+            result["manifold"] = {
+                "data": manifold_buffer,
+                "target": "ARRAY_BUFFER",
+                "componentType": 5121,  # GL_UNSIGNED_BYTE
+                "type": "SCALAR",
+                "count": edge_count
+            }
+        
+        return result
+
+    def _encode_loops_native(self, mesh: bpy.types.Mesh) -> Dict[str, Any]:
+        """Encode loop data using native mesh APIs."""
+        if not mesh.loops:
+            return {}
+
+        loop_count = len(mesh.loops)
+        if loop_count == 0:
+            return {}
+
+        # Create topology data (vertex, edge, face, next, prev, radial_next, radial_prev)
+        topology_buffer = bytearray()
+        topology_struct = struct.Struct("<IIIIIII")  # 7×u32 per loop
+        
+        # Create UV data using glTF standard attribute names
+        uv_buffers = {}
+        uv_struct = struct.Struct("<ff")
+        
+        # Check for UV layers
+        if mesh.uv_layers:
+            for i, uv_layer in enumerate(mesh.uv_layers):
+                uv_buffers[f"TEXCOORD_{i}"] = bytearray()
+
+        # Build loop navigation data using native mesh APIs
+        for loop in mesh.loops:
+            # Find the polygon this loop belongs to
+            poly = None
+            for polygon in mesh.polygons:
+                if polygon.loop_start <= loop.index < polygon.loop_start + polygon.loop_total:
+                    poly = polygon
+                    break
+            
+            if not poly:
+                # Fallback values for orphaned loops
+                next_idx = prev_idx = radial_next_idx = radial_prev_idx = loop.index
+            else:
+                # Calculate next and previous in face
+                loop_in_poly = loop.index - poly.loop_start
+                next_in_poly = (loop_in_poly + 1) % poly.loop_total
+                prev_in_poly = (loop_in_poly - 1) % poly.loop_total
+                next_idx = poly.loop_start + next_in_poly
+                prev_idx = poly.loop_start + prev_in_poly
+                
+                # For now, set radial navigation to self (can be improved later)
+                radial_next_idx = radial_prev_idx = loop.index
+            
+            # Pack topology
+            topology_buffer.extend(topology_struct.pack(
+                loop.vertex_index,  # vertex
+                loop.edge_index,    # edge
+                poly.index if poly else 0,  # face
+                next_idx,           # next
+                prev_idx,           # prev
+                radial_next_idx,    # radial_next
+                radial_prev_idx     # radial_prev
+            ))
+            
+            # Pack UV coordinates using glTF standard naming
+            if mesh.uv_layers:
+                for uv_i, uv_layer in enumerate(mesh.uv_layers):
+                    uv_coord = uv_layer.data[loop.index].uv
+                    uv_buffers[f"TEXCOORD_{uv_i}"].extend(uv_struct.pack(uv_coord[0], uv_coord[1]))
+
+        result = {
+            "count": loop_count,
+            "topology": {
+                "data": topology_buffer,
+                "target": "ARRAY_BUFFER",
+                "componentType": 5125,  # GL_UNSIGNED_INT
+                "type": "SCALAR",  # 7 components per loop stored as scalars
+                "count": loop_count * 7  # 7 values per loop
+            }
+        }
+        
+        # Add UV attributes if present
+        if uv_buffers:
+            result["attributes"] = {}
+            for attr_name, uv_buffer in uv_buffers.items():
+                result["attributes"][attr_name] = {
+                    "data": uv_buffer,
+                    "target": "ARRAY_BUFFER",
+                    "componentType": 5126,  # GL_FLOAT
+                    "type": "VEC2",
+                    "count": loop_count
+                }
+
+        return result
+
+    def _encode_faces_native(self, mesh: bpy.types.Mesh) -> Dict[str, Any]:
+        """Encode face data using native mesh APIs."""
+        if not mesh.polygons:
+            return {}
+
+        face_count = len(mesh.polygons)
+        
+        # Create variable-length arrays for face data
+        vertices_buffer = bytearray()
+        edges_buffer = bytearray() 
+        loops_buffer = bytearray()
+        normals_buffer = bytearray()
+        offsets_buffer = bytearray()
+        
+        vertex_struct = struct.Struct("<I")
+        edge_struct = struct.Struct("<I")
+        loop_struct = struct.Struct("<I")
+        normal_struct = struct.Struct("<fff")
+        offset_struct = struct.Struct("<I")
+        
+        vertices_offset = 0
+        
+        for poly in mesh.polygons:
+            # Record vertex offset for this face (required by schema)
+            offsets_buffer.extend(offset_struct.pack(vertices_offset))
+            
+            # Pack face vertices (required by schema: variable length, u32 indices)
+            for vert_idx in poly.vertices:
+                vertices_buffer.extend(vertex_struct.pack(vert_idx))
+                vertices_offset += 1
+                
+            # Pack face edges (optional)
+            for edge_key in poly.edge_keys:
+                # Find edge index for this edge key
+                for edge in mesh.edges:
+                    if (edge.vertices[0], edge.vertices[1]) == edge_key or (edge.vertices[1], edge.vertices[0]) == edge_key:
+                        edges_buffer.extend(edge_struct.pack(edge.index))
+                        break
+                
+            # Pack face loops (optional)
+            for loop_idx in range(poly.loop_start, poly.loop_start + poly.loop_total):
+                loops_buffer.extend(loop_struct.pack(loop_idx))
+                
+            # Pack face normal (Vec3<f32> per face)
+            normals_buffer.extend(normal_struct.pack(*poly.normal))
+
+        # Final offset (required: u32 per face + 1)
+        offsets_buffer.extend(offset_struct.pack(vertices_offset))
+
+        result = {
+            "count": face_count,
+            "vertices": {
+                "data": vertices_buffer,
+                "target": "ARRAY_BUFFER",
+                "componentType": 5125,  # GL_UNSIGNED_INT
+                "type": "SCALAR"
+            },
+            "offsets": {
+                "data": offsets_buffer,
+                "target": "ARRAY_BUFFER",
+                "componentType": 5125,  # GL_UNSIGNED_INT
+                "type": "SCALAR",
+                "count": face_count + 1
+            }
+        }
+        
+        # Add optional data
+        if edges_buffer:
+            result["edges"] = {
+                "data": edges_buffer,
+                "target": "ARRAY_BUFFER",
+                "componentType": 5125,  # GL_UNSIGNED_INT
+                "type": "SCALAR"
+            }
+        
+        if loops_buffer:
+            result["loops"] = {
+                "data": loops_buffer,
+                "target": "ARRAY_BUFFER",
+                "componentType": 5125,  # GL_UNSIGNED_INT
+                "type": "SCALAR"
+            }
+        
+        if normals_buffer:
+            result["normals"] = {
+                "data": normals_buffer,
+                "target": "ARRAY_BUFFER",
+                "componentType": 5126,  # GL_FLOAT
+                "type": "VEC3",
+                "count": face_count
+            }
+        
+        return result
+
+    @staticmethod
     def create_bmesh_from_mesh(mesh_obj: bpy.types.Object) -> Optional[BMesh]:
         """Create BMesh from Blender mesh object with proper error handling."""
         if mesh_obj.type != 'MESH' or not mesh_obj.data:

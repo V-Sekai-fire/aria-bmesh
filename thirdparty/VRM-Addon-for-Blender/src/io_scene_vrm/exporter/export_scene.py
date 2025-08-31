@@ -113,6 +113,11 @@ class EXPORT_SCENE_OT_vrm(Operator, ExportHelper):
     export_gltf_animations: BoolProperty(  # type: ignore[valid-type]
         name="Export glTF Animations",
     )
+    export_try_sparse_sk: BoolProperty(  # type: ignore[valid-type]
+        name="Export Sparse Shape Keys",
+        description="Try to use sparse accessor for shape keys",
+        update=export_vrm_update_addon_preferences,
+    )
 
     errors: CollectionProperty(  # type: ignore[valid-type]
         type=validation.VrmValidationError,
@@ -244,6 +249,7 @@ class EXPORT_SCENE_OT_vrm(Operator, ExportHelper):
         export_all_influences: bool  # type: ignore[no-redef]
         export_lights: bool  # type: ignore[no-redef]
         export_gltf_animations: bool  # type: ignore[no-redef]
+        export_try_sparse_sk: bool  # type: ignore[no-redef]
         errors: CollectionPropertyProtocol[  # type: ignore[no-redef]
             VrmValidationError
         ]
