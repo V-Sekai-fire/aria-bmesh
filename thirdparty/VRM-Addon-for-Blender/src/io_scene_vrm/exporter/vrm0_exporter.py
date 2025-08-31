@@ -2587,53 +2587,39 @@ class Vrm0Exporter(AbstractBaseVrmExporter):
 
             total_weight = sum(weights)
             if total_weight < float_info.epsilon:
-                logger.debug(
-                    "No weight on vertex index=%d mesh=%s",
-                    vertex_index,
-                    main_mesh_data.name,
+                # Improved weight assignment with better fallback logic
+                joint = self._find_optimal_fallback_bone(
+                    obj, vertex_index, vertex, bone_name_to_node_index, skin_joints
                 )
-
-                # Attach near bone
-                joint = None
-                mesh_parent: Optional[Object] = obj
-                while mesh_parent:
-                    if mesh_parent.parent_type == "BONE":
-                        if (
-                            mesh_parent.parent == self.armature
-                            and (
-                                bone_index := bone_name_to_node_index.get(
-                                    mesh_parent.parent_bone
-                                )
-                            )
-                            is not None
-                            and bone_index in skin_joints
-                        ):
-                            joint = skin_joints.index(bone_index)
-                        break
-                    if mesh_parent.parent_type == "OBJECT":
-                        mesh_parent = mesh_parent.parent
+                
+                if joint is None:
+                    # Last resort: find any available joint
+                    if skin_joints:
+                        joint = 0  # Use first available joint
+                        fallback_bone_name = next(
+                            (name for name, idx in bone_name_to_node_index.items() 
+                             if idx == skin_joints[joint]), "unknown"
+                        )
+                        logger.warning(
+                            f"Vertex {vertex_index} in mesh '{main_mesh_data.name}' has no weight. "
+                            f"Assigning to bone '{fallback_bone_name}' as last resort."
+                        )
                     else:
-                        break
-
-                if joint is None:
-                    # TODO: たぶんhipsよりはhipsから辿ったルートボーンの方が良い
-                    ext = get_armature_extension(self.armature_data)
-                    for human_bone in ext.vrm0.humanoid.human_bones:
-                        if human_bone.bone != "hips":
-                            continue
-                        if (
-                            bone_index := bone_name_to_node_index.get(
-                                human_bone.node.bone_name
-                            )
-                        ) is not None and bone_index in skin_joints:
-                            joint = skin_joints.index(bone_index)
-
-                if joint is None:
-                    message = "No fallback bone index found"
-                    raise ValueError(message)
-                weights = (1.0, 0, 0, 0)
+                        message = f"No available bones for vertex weight assignment in mesh '{main_mesh_data.name}'"
+                        raise ValueError(message)
+                else:
+                    fallback_bone_name = next(
+                        (name for name, idx in bone_name_to_node_index.items() 
+                         if idx == skin_joints[joint]), "unknown"
+                    )
+                    logger.info(
+                        f"Vertex {vertex_index} in mesh '{main_mesh_data.name}' assigned to bone '{fallback_bone_name}'"
+                    )
+                
+                weights = (1.0, 0.0, 0.0, 0.0)
                 joints = (joint, 0, 0, 0)
             else:
+                # Normalize existing weights
                 weights = (
                     weights[0] / total_weight,
                     weights[1] / total_weight,
@@ -2705,25 +2691,41 @@ class Vrm0Exporter(AbstractBaseVrmExporter):
         """
         Enhanced triangle fan tessellation for EXT_bmesh_encoding.
         
-        Uses buffer-based BMesh encoding for topology preservation.
+        Uses buffer-based BMesh encoding for topology preservation with
+        improved error handling and fallback mechanisms.
         """
         if not bm:
+            logger.debug("No BMesh provided for tessellation")
             return []
             
         if export_ext_bmesh_encoding:
             # Use EXT_bmesh_encoding buffer-based triangle fan algorithm
             bmesh_encoder = BmeshEncoder()
             try:
-                return bmesh_encoder.encode_triangle_fan_implicit(bm)
+                logger.debug(f"Attempting EXT_bmesh_encoding triangle fan for mesh with {len(bm.faces)} faces")
+                result = bmesh_encoder.encode_triangle_fan_implicit(bm)
+                if result:
+                    logger.info(f"EXT_bmesh_encoding triangle fan successful: {len(result)} triangles")
+                    return result
+                else:
+                    logger.warning("EXT_bmesh_encoding triangle fan returned empty result")
             except Exception as e:
-                logger.warning(f"EXT_bmesh_encoding failed, falling back to standard triangulation: {e}")
+                logger.error(f"EXT_bmesh_encoding triangle fan failed: {e}", exc_info=True)
         
         # Standard triangulation fallback
-        return [
-            (loops[0].face.material_index, loops)
-            for loops in bm.calc_loop_triangles()
-            if loops
-        ]
+        logger.debug("Using standard triangulation fallback")
+        try:
+            bm.calc_loop_triangles()
+            standard_result = [
+                (loop_triangle.material_index, tuple(bm.loops[i] for i in loop_triangle.loops))
+                for loop_triangle in bm.loop_triangles
+                if loop_triangle.loops
+            ]
+            logger.debug(f"Standard triangulation completed: {len(standard_result)} triangles")
+            return standard_result
+        except Exception as e:
+            logger.error(f"Standard triangulation also failed: {e}")
+            return []
 
 
     def write_mesh_node(
@@ -3887,6 +3889,83 @@ class Vrm0Exporter(AbstractBaseVrmExporter):
             )
         return shape_key_name_to_vertex_index_to_morph_normal_diffs
 
+    def _find_optimal_fallback_bone(
+        self,
+        obj: Object,
+        vertex_index: int,
+        vertex: object,
+        bone_name_to_node_index: Mapping[str, int],
+        skin_joints: Sequence[int],
+    ) -> Optional[int]:
+        """
+        Find optimal fallback bone for vertices with no weight assignment.
+        
+        Uses intelligent heuristics to select the most appropriate bone.
+        """
+        try:
+            # Strategy 1: Check object's parent bone
+            if obj.parent_type == "BONE" and obj.parent_bone:
+                if (
+                    obj.parent == self.armature
+                    and (bone_index := bone_name_to_node_index.get(obj.parent_bone))
+                    is not None
+                    and bone_index in skin_joints
+                ):
+                    return skin_joints.index(bone_index)
+            
+            # Strategy 2: Find nearest bone to vertex position
+            vertex_world_pos = obj.matrix_world @ vertex.co
+            nearest_bone = None
+            nearest_distance = float('inf')
+            
+            for bone_name, node_index in bone_name_to_node_index.items():
+                if node_index not in skin_joints:
+                    continue
+                
+                bone = self.armature.pose.bones.get(bone_name)
+                if not bone:
+                    continue
+                
+                bone_world_pos = self.armature.matrix_world @ bone.head
+                distance = (vertex_world_pos - bone_world_pos).length
+                
+                if distance < nearest_distance:
+                    nearest_distance = distance
+                    nearest_bone = skin_joints.index(node_index)
+            
+            if nearest_bone is not None:
+                return nearest_bone
+            
+            # Strategy 3: Find root humanoid bone (hips or similar)
+            ext = get_armature_extension(self.armature_data)
+            preferred_bones = ["hips", "spine", "chest", "upperChest"]
+            
+            for preferred_bone in preferred_bones:
+                for human_bone in ext.vrm0.humanoid.human_bones:
+                    if human_bone.bone != preferred_bone:
+                        continue
+                    if (
+                        bone_index := bone_name_to_node_index.get(
+                            human_bone.node.bone_name
+                        )
+                    ) is not None and bone_index in skin_joints:
+                        return skin_joints.index(bone_index)
+            
+            # Strategy 4: Use any humanoid bone
+            for human_bone in ext.vrm0.humanoid.human_bones:
+                if (
+                    bone_index := bone_name_to_node_index.get(
+                        human_bone.node.bone_name
+                    )
+                ) is not None and bone_index in skin_joints:
+                    return skin_joints.index(bone_index)
+            
+            return None
+            
+        except Exception as e:
+            logger.debug(f"Fallback bone selection failed: {e}")
+            return None
+
     def have_skin(self, mesh: Object) -> bool:
         # TODO: このメソッドは誤判定があるが互換性のためにそのままになっている。
         # 将来的には正しい実装に置き換わる
@@ -3912,6 +3991,33 @@ class Vrm0Exporter(AbstractBaseVrmExporter):
                 return True
             mesh = parent_mesh
         return True
+
+    def _adjust_buffer_view_indices(self, extension_data: dict, offset: int) -> dict:
+        """Adjust buffer view indices in extension data to account for existing buffer views."""
+        adjusted_data = {}
+        
+        for component_name, component_data in extension_data.items():
+            if isinstance(component_data, dict):
+                adjusted_component = component_data.copy()
+                
+                # Adjust buffer view indices for each property
+                for prop_name, prop_value in component_data.items():
+                    if isinstance(prop_value, int) and prop_name in ["positions", "vertices", "faces", "topology", "normals", "offsets"]:
+                        adjusted_component[prop_name] = prop_value + offset
+                    elif prop_name == "attributes" and isinstance(prop_value, dict):
+                        adjusted_attributes = {}
+                        for attr_name, attr_index in prop_value.items():
+                            if isinstance(attr_index, int):
+                                adjusted_attributes[attr_name] = attr_index + offset
+                            else:
+                                adjusted_attributes[attr_name] = attr_index
+                        adjusted_component["attributes"] = adjusted_attributes
+                
+                adjusted_data[component_name] = adjusted_component
+            else:
+                adjusted_data[component_name] = component_data
+        
+        return adjusted_data
 
     def get_asset_generator(self) -> str:
         addon_version = get_addon_version()

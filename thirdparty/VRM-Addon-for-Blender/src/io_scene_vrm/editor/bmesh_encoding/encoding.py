@@ -71,39 +71,29 @@ class BmeshEncoder:
         return extension_data
 
     def _encode_vertices_to_buffers(self, bm: BMesh) -> Dict[str, Any]:
-        """Encode vertex data for buffer format."""
+        """Encode vertex data for buffer format according to EXT_bmesh_encoding schema."""
         if not bm.verts:
             return {}
 
         vertex_count = len(bm.verts)
         
-        # Create position data
+        # Create position data (required by schema)
         positions_buffer = bytearray()
         position_struct = struct.Struct("<fff")
         
-        # Create edge adjacency data
+        # Create edge adjacency data (optional per schema)
         edges_buffer = bytearray()
-        edge_offsets_buffer = bytearray()
-        offset_struct = struct.Struct("<I")
         edge_index_struct = struct.Struct("<I")
         
-        current_offset = 0
         for vert in bm.verts:
-            # Pack vertex position
+            # Pack vertex position (Vec3<f32> as required by schema)
             positions_buffer.extend(position_struct.pack(*vert.co))
             
-            # Pack edge adjacency
-            edge_indices = [edge.index for edge in vert.link_edges]
-            offset_struct.pack_into(edge_offsets_buffer, current_offset * 4, len(edge_indices))
-            current_offset += 1
-            
-            for edge_idx in edge_indices:
-                edges_buffer.extend(edge_index_struct.pack(edge_idx))
+            # Pack vertex-edge adjacency data
+            for edge in vert.link_edges:
+                edges_buffer.extend(edge_index_struct.pack(edge.index))
 
-        # Final offset for edge adjacency
-        edge_offsets_buffer.extend(offset_struct.pack(len(edges_buffer) // 4))
-
-        return {
+        result = {
             "count": vertex_count,
             "positions": {
                 "data": positions_buffer,
@@ -111,60 +101,51 @@ class BmeshEncoder:
                 "componentType": 5126,  # GL_FLOAT
                 "type": "VEC3",
                 "count": vertex_count
-            },
-            "edges": {
-                "data": edges_buffer,
-                "target": "ARRAY_BUFFER", 
-                "componentType": 5125,  # GL_UNSIGNED_INT
-                "type": "SCALAR"
-            },
-            "edgeOffsets": {
-                "data": edge_offsets_buffer,
-                "target": "ARRAY_BUFFER",
-                "componentType": 5125,  # GL_UNSIGNED_INT  
-                "type": "SCALAR",
-                "count": vertex_count + 1
             }
         }
+        
+        # Add edges buffer if there's adjacency data
+        if edges_buffer:
+            result["edges"] = {
+                "data": edges_buffer,
+                "target": "ARRAY_BUFFER",
+                "componentType": 5125,  # GL_UNSIGNED_INT
+                "type": "SCALAR"
+            }
+        
+        return result
 
     def _encode_edges_to_buffers(self, bm: BMesh) -> Dict[str, Any]:
-        """Encode edge data for buffer format."""
+        """Encode edge data for buffer format according to EXT_bmesh_encoding schema."""
         if not bm.edges:
             return {}
 
         edge_count = len(bm.edges)
         
-        # Create edge vertex pairs
+        # Create edge vertex pairs (required: 2×u32 per edge)
         vertices_buffer = bytearray()
         vertex_pair_struct = struct.Struct("<II")
         
-        # Create face adjacency data
+        # Create face adjacency data (optional)
         faces_buffer = bytearray()
-        face_offsets_buffer = bytearray()
-        offset_struct = struct.Struct("<I")
         face_index_struct = struct.Struct("<I")
         
-        # Create manifold flags
+        # Create manifold flags (optional: u8 per edge)
         manifold_buffer = bytearray()
         manifold_struct = struct.Struct("<B")
         
-        current_offset = 0
         for edge in bm.edges:
-            # Pack edge vertices
+            # Pack edge vertices (required by schema)
             vertices_buffer.extend(vertex_pair_struct.pack(
                 edge.verts[0].index, 
                 edge.verts[1].index
             ))
             
-            # Pack face adjacency
-            face_indices = [face.index for face in edge.link_faces]
-            offset_struct.pack_into(face_offsets_buffer, current_offset * 4, len(face_indices))
-            current_offset += 1
+            # Pack face adjacency data
+            for face in edge.link_faces:
+                faces_buffer.extend(face_index_struct.pack(face.index))
             
-            for face_idx in face_indices:
-                faces_buffer.extend(face_index_struct.pack(face_idx))
-            
-            # Pack manifold status
+            # Pack manifold status (0=non-manifold, 1=manifold, 255=unknown)
             manifold_status = self._calculate_edge_manifold_status(edge)
             if manifold_status is True:
                 manifold_buffer.extend(manifold_struct.pack(1))
@@ -173,10 +154,7 @@ class BmeshEncoder:
             else:
                 manifold_buffer.extend(manifold_struct.pack(255))  # Unknown
 
-        # Final offset for face adjacency
-        face_offsets_buffer.extend(offset_struct.pack(len(faces_buffer) // 4))
-
-        return {
+        result = {
             "count": edge_count,
             "vertices": {
                 "data": vertices_buffer,
@@ -184,28 +162,29 @@ class BmeshEncoder:
                 "componentType": 5125,  # GL_UNSIGNED_INT
                 "type": "VEC2",
                 "count": edge_count
-            },
-            "faces": {
+            }
+        }
+        
+        # Add optional face adjacency data
+        if faces_buffer:
+            result["faces"] = {
                 "data": faces_buffer,
                 "target": "ARRAY_BUFFER",
                 "componentType": 5125,  # GL_UNSIGNED_INT
                 "type": "SCALAR"
-            },
-            "faceOffsets": {
-                "data": face_offsets_buffer,
-                "target": "ARRAY_BUFFER",
-                "componentType": 5125,  # GL_UNSIGNED_INT
-                "type": "SCALAR",
-                "count": edge_count + 1
-            },
-            "manifold": {
+            }
+        
+        # Add optional manifold flags
+        if manifold_buffer:
+            result["manifold"] = {
                 "data": manifold_buffer,
                 "target": "ARRAY_BUFFER",
                 "componentType": 5121,  # GL_UNSIGNED_BYTE
                 "type": "SCALAR",
                 "count": edge_count
             }
-        }
+        
+        return result
 
     def _encode_loops_to_buffers(self, bm: BMesh) -> Dict[str, Any]:
         """Encode loop data for buffer format with glTF-compliant UV handling."""
@@ -300,7 +279,7 @@ class BmeshEncoder:
         return result
 
     def _encode_faces_to_buffers(self, bm: BMesh) -> Dict[str, Any]:
-        """Encode face data for buffer format."""
+        """Encode face data for buffer format according to EXT_bmesh_encoding schema."""
         if not bm.faces:
             return {}
 
@@ -325,36 +304,32 @@ class BmeshEncoder:
         
         loop_index = 0
         for face in bm.faces:
-            # Record offsets for this face
+            # Record vertex offset for this face (required by schema)
             offsets_buffer.extend(offset_struct.pack(vertices_offset))
-            offsets_buffer.extend(offset_struct.pack(edges_offset))
-            offsets_buffer.extend(offset_struct.pack(loops_offset))
             
-            # Pack face vertices
+            # Pack face vertices (required by schema: variable length, u32 indices)
             for vert in face.verts:
                 vertices_buffer.extend(vertex_struct.pack(vert.index))
                 vertices_offset += 1
                 
-            # Pack face edges
+            # Pack face edges (optional)
             for edge in face.edges:
                 edges_buffer.extend(edge_struct.pack(edge.index))
                 edges_offset += 1
                 
-            # Pack face loops
+            # Pack face loops (optional)
             for _ in face.loops:
                 loops_buffer.extend(loop_struct.pack(loop_index))
                 loop_index += 1
                 loops_offset += 1
                 
-            # Pack face normal
+            # Pack face normal (Vec3<f32> per face)
             normals_buffer.extend(normal_struct.pack(*face.normal))
 
-        # Final offsets
+        # Final offset (required: u32 per face + 1)
         offsets_buffer.extend(offset_struct.pack(vertices_offset))
-        offsets_buffer.extend(offset_struct.pack(edges_offset))  
-        offsets_buffer.extend(offset_struct.pack(loops_offset))
 
-        return {
+        result = {
             "count": face_count,
             "vertices": {
                 "data": vertices_buffer,
@@ -362,33 +337,42 @@ class BmeshEncoder:
                 "componentType": 5125,  # GL_UNSIGNED_INT
                 "type": "SCALAR"
             },
-            "edges": {
+            "offsets": {
+                "data": offsets_buffer,
+                "target": "ARRAY_BUFFER",
+                "componentType": 5125,  # GL_UNSIGNED_INT
+                "type": "SCALAR",
+                "count": face_count + 1
+            }
+        }
+        
+        # Add optional data
+        if edges_buffer:
+            result["edges"] = {
                 "data": edges_buffer,
                 "target": "ARRAY_BUFFER",
                 "componentType": 5125,  # GL_UNSIGNED_INT
                 "type": "SCALAR"
-            },
-            "loops": {
+            }
+        
+        if loops_buffer:
+            result["loops"] = {
                 "data": loops_buffer,
                 "target": "ARRAY_BUFFER",
                 "componentType": 5125,  # GL_UNSIGNED_INT
                 "type": "SCALAR"
-            },
-            "normals": {
+            }
+        
+        if normals_buffer:
+            result["normals"] = {
                 "data": normals_buffer,
                 "target": "ARRAY_BUFFER",
                 "componentType": 5126,  # GL_FLOAT
                 "type": "VEC3",
                 "count": face_count
-            },
-            "offsets": {
-                "data": offsets_buffer,
-                "target": "ARRAY_BUFFER",
-                "componentType": 5125,  # GL_UNSIGNED_INT
-                "type": "VEC3",  # 3 offsets per face (vertices, edges, loops)
-                "count": face_count + 1
             }
-        }
+        
+        return result
 
     def _calculate_edge_manifold_status(self, edge: BMEdge) -> Optional[bool]:
         """
@@ -447,40 +431,262 @@ class BmeshEncoder:
         Enhanced triangle fan encoding compatible with BMesh topology preservation.
         
         Creates triangle fans optimized for BMesh reconstruction while
-        maintaining material grouping for glTF compliance.
+        maintaining material grouping for glTF compliance. Uses robust algorithms
+        to handle complex meshes like Suzanne with improved error handling.
         """
         if not bm.faces:
+            logger.debug("No faces found in BMesh for triangle fan encoding")
             return []
 
-        # Ensure face indices are valid
-        bm.faces.ensure_lookup_table()
+        # Ensure all lookup tables are valid
+        try:
+            bm.faces.ensure_lookup_table()
+            bm.verts.ensure_lookup_table()
+            bm.loops.ensure_lookup_table()
+            bm.edges.ensure_lookup_table()
+        except Exception as e:
+            logger.error(f"Failed to ensure BMesh lookup tables: {e}")
+            return []
         
         triangulated_faces = []
+        failed_faces = 0
+        total_triangles = 0
         
         for face in bm.faces:
-            face_loops = list(face.loops)
-            # Use glTF standard material index (handled at primitive level, not face level)
-            material_index = getattr(face, 'material_index', 0)
-            
-            if len(face_loops) <= 3:
-                # Triangle or less - handle directly
-                if len(face_loops) == 3:
+            try:
+                face_loops = list(face.loops)
+                # Use glTF standard material index (handled at primitive level, not face level)
+                material_index = getattr(face, 'material_index', 0)
+                
+                if len(face_loops) <= 2:
+                    # Degenerate face - skip
+                    logger.debug(f"Skipping degenerate face {face.index} with {len(face_loops)} vertices")
+                    failed_faces += 1
+                    continue
+                elif len(face_loops) == 3:
+                    # Triangle - handle directly
                     triangulated_faces.append((material_index, tuple(face_loops)))
+                    total_triangles += 1
+                    continue
+                
+                # N-gon - create triangle fan with improved algorithm
+                fan_triangles = self._create_robust_triangle_fan(face, face_loops, material_index)
+                
+                if fan_triangles:
+                    triangulated_faces.extend(fan_triangles)
+                    total_triangles += len(fan_triangles)
+                else:
+                    logger.debug(f"Failed to create triangle fan for face {face.index}, using fallback")
+                    # Fallback: simple fan from first vertex
+                    fallback_triangles = self._create_simple_triangle_fan(face_loops, material_index)
+                    triangulated_faces.extend(fallback_triangles)
+                    total_triangles += len(fallback_triangles)
+                    
+            except Exception as e:
+                logger.error(f"Failed to triangulate face {face.index}: {e}")
+                failed_faces += 1
                 continue
+
+        logger.info(f"Triangle fan encoding completed: {total_triangles} triangles from {len(bm.faces)} faces "
+                   f"({failed_faces} failed)")
+        return triangulated_faces
+
+    def _create_robust_triangle_fan(
+        self, 
+        face: BMFace, 
+        face_loops: List[BMLoop], 
+        material_index: int
+    ) -> List[Tuple[int, Tuple[BMLoop, ...]]]:
+        """
+        Create triangle fan with improved robustness for complex geometry.
+        
+        Uses geometric validation and optimal anchor selection.
+        """
+        try:
+            # Step 1: Validate face is not degenerate
+            if not self._validate_face_geometry(face):
+                logger.debug(f"Face {face.index} failed geometry validation")
+                return []
             
-            # N-gon - create triangle fan from first vertex
-            anchor_loop = face_loops[0]
+            # Step 2: Select optimal anchor vertex
+            anchor_loop = self._select_optimal_anchor_loop(face, face_loops)
+            anchor_index = face_loops.index(anchor_loop)
             
-            # Create triangle fan
-            for i in range(2, len(face_loops)):
+            # Step 3: Create triangle fan from optimal anchor
+            triangles = []
+            
+            for i in range(1, len(face_loops) - 1):
+                loop1_idx = (anchor_index + i) % len(face_loops)
+                loop2_idx = (anchor_index + i + 1) % len(face_loops)
+                
                 triangle_loops = (
                     anchor_loop,
-                    face_loops[i - 1], 
-                    face_loops[i]
+                    face_loops[loop1_idx],
+                    face_loops[loop2_idx]
                 )
-                triangulated_faces.append((material_index, triangle_loops))
+                
+                # Step 4: Validate each triangle
+                if self._validate_triangle_geometry(triangle_loops):
+                    triangles.append((material_index, triangle_loops))
+                else:
+                    logger.debug(f"Skipping invalid triangle in face {face.index}")
+            
+            return triangles
+            
+        except Exception as e:
+            logger.debug(f"Robust triangle fan creation failed for face {face.index}: {e}")
+            return []
 
-        return triangulated_faces
+    def _validate_face_geometry(self, face: BMFace) -> bool:
+        """Validate that face has valid geometry for triangulation."""
+        try:
+            # Check face has valid area
+            area = face.calc_area()
+            if area < 1e-8:
+                return False
+            
+            # Check face has valid normal
+            normal = face.normal
+            if normal.length < 1e-8:
+                return False
+            
+            # Check vertices are not all coincident
+            positions = [loop.vert.co for loop in face.loops]
+            if len(set(tuple(pos) for pos in positions)) < 3:
+                return False
+            
+            return True
+            
+        except Exception:
+            return False
+
+    def _validate_triangle_geometry(self, triangle_loops: Tuple[BMLoop, ...]) -> bool:
+        """Validate that triangle has non-zero area and proper winding."""
+        try:
+            if len(triangle_loops) != 3:
+                return False
+            
+            v0 = triangle_loops[0].vert.co
+            v1 = triangle_loops[1].vert.co
+            v2 = triangle_loops[2].vert.co
+            
+            # Check vertices are not coincident
+            if (v0 - v1).length < 1e-8 or (v1 - v2).length < 1e-8 or (v2 - v0).length < 1e-8:
+                return False
+            
+            # Calculate triangle area using cross product
+            edge1 = v1 - v0
+            edge2 = v2 - v0
+            cross = edge1.cross(edge2)
+            area = cross.length * 0.5
+            
+            return area > 1e-8  # Non-degenerate threshold
+            
+        except Exception:
+            return False
+
+    def _select_optimal_anchor_loop(self, face: BMFace, face_loops: List[BMLoop]) -> BMLoop:
+        """
+        Select the optimal anchor vertex for triangle fan creation.
+        
+        Uses geometric and topological criteria for robust triangulation.
+        """
+        if len(face_loops) <= 3:
+            return face_loops[0]
+        
+        try:
+            # Calculate face center for reference
+            face_center = face.calc_center_median()
+            
+            best_loop = face_loops[0]
+            best_score = float('-inf')
+            
+            for loop in face_loops:
+                score = 0
+                
+                # Criterion 1: Distance to face center (prefer central vertices)
+                distance_to_center = (loop.vert.co - face_center).length
+                score += 10.0 / (distance_to_center + 0.01)  # Avoid division by zero
+                
+                # Criterion 2: Vertex valence (prefer simpler topology)
+                valence = len(loop.vert.link_edges)
+                score += 5.0 / (valence + 1)
+                
+                # Criterion 3: Angle quality (prefer vertices that create good triangles)
+                valid_triangles = self._count_valid_triangles_from_anchor(face_loops, loop)
+                score += valid_triangles * 2.0
+                
+                # Criterion 4: Avoid vertices on sharp edges
+                if self._is_on_sharp_edge(loop):
+                    score *= 0.5
+                
+                if score > best_score:
+                    best_score = score
+                    best_loop = loop
+            
+            return best_loop
+            
+        except Exception as e:
+            logger.debug(f"Optimal anchor selection failed: {e}, using first vertex")
+            return face_loops[0]
+
+    def _count_valid_triangles_from_anchor(self, face_loops: List[BMLoop], anchor_loop: BMLoop) -> int:
+        """Count how many valid triangles can be created from this anchor."""
+        try:
+            anchor_index = face_loops.index(anchor_loop)
+            valid_count = 0
+            
+            for i in range(1, len(face_loops) - 1):
+                loop1_idx = (anchor_index + i) % len(face_loops)
+                loop2_idx = (anchor_index + i + 1) % len(face_loops)
+                
+                triangle_loops = (
+                    anchor_loop,
+                    face_loops[loop1_idx],
+                    face_loops[loop2_idx]
+                )
+                
+                if self._validate_triangle_geometry(triangle_loops):
+                    valid_count += 1
+            
+            return valid_count
+            
+        except Exception:
+            return 0
+
+    def _is_on_sharp_edge(self, loop: BMLoop) -> bool:
+        """Check if vertex is on a sharp edge (potential triangulation problem)."""
+        try:
+            for edge in loop.vert.link_edges:
+                if not edge.smooth or len(edge.link_faces) != 2:
+                    return True
+            return False
+        except Exception:
+            return False
+
+    def _create_simple_triangle_fan(
+        self, 
+        face_loops: List[BMLoop], 
+        material_index: int
+    ) -> List[Tuple[int, Tuple[BMLoop, ...]]]:
+        """
+        Create simple triangle fan from first vertex as fallback.
+        
+        This is the original algorithm as a reliable fallback when
+        robust methods fail.
+        """
+        triangles = []
+        anchor_loop = face_loops[0]
+        
+        for i in range(2, len(face_loops)):
+            triangle_loops = (
+                anchor_loop,
+                face_loops[i - 1],
+                face_loops[i]
+            )
+            triangles.append((material_index, triangle_loops))
+        
+        return triangles
 
     @staticmethod
     def create_bmesh_from_mesh(mesh_obj: bpy.types.Object) -> Optional[BMesh]:
