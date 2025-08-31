@@ -9,6 +9,7 @@ import bpy
 from bmesh.types import BMesh, BMFace, BMLoop, BMVert, BMEdge
 from mathutils import Vector
 
+from ...common.gltf import parse_glb
 from ...common.logger import get_logger
 
 logger = get_logger(__name__)
@@ -73,69 +74,64 @@ class BmeshDecoder:
         return all(key in extension_data for key in required_keys)
 
     def _reconstruct_from_buffer_format(self, extension_data: Dict[str, Any], parse_result: Any) -> Optional[BMesh]:
-        """Reconstruct BMesh from buffer format data."""
+        """
+        Reconstruct non-manifold BMesh from EXT_bmesh_encoding extension data.
+        
+        Uses mesh-based reconstruction to restore non-manifold boundary representation
+        with proper half-edge connectivity, preserving N-gons and non-manifold edges.
+        """
+        logger.info("Reconstructing non-manifold boundary representation from EXT_bmesh_encoding")
+        
+        # Extract topology information from extension data
+        vertex_data = extension_data.get("vertices", {})
+        edge_data = extension_data.get("edges", {})
+        loop_data = extension_data.get("loops", {})
+        face_data = extension_data.get("faces", {})
+
+        # Validate that we have the necessary topology data
+        if not all(isinstance(data, dict) and "count" in data for data in [vertex_data, edge_data, face_data]):
+            logger.warning("EXT_bmesh_encoding: Missing required topology data for non-manifold reconstruction")
+            return None
+
+        vertex_count = vertex_data.get("count", 0)
+        edge_count = edge_data.get("count", 0)
+        face_count = face_data.get("count", 0)
+        loop_count = loop_data.get("count", 0)
+
+        logger.info(f"Reconstructing BMesh: {vertex_count} vertices, {edge_count} edges, {face_count} faces, {loop_count} loops")
+
+        # Create new BMesh for non-manifold reconstruction
         bm = bmesh.new()
         
         try:
-            vertex_data = extension_data.get("vertices", {})
-            edge_data = extension_data.get("edges", {})
-            loop_data = extension_data.get("loops", {})
-            face_data = extension_data.get("faces", {})
-
-            # Ensure all components have buffer format structure
-            if not (isinstance(vertex_data, dict) and "count" in vertex_data):
-                logger.warning("EXT_bmesh_encoding: Invalid vertex data format")
-                bm.free()
-                return None
-
-            # Use the VRM addon's parse_result instead of Blender glTF context
-            if not parse_result:
-                logger.error("No VRM parse result available for buffer reconstruction")
-                bm.free()
-                return None
-
-            # Reconstruct vertices
-            vertex_map = {}
-            if vertex_data and vertex_data.get("count", 0) > 0:
-                vertex_map = self._reconstruct_vertices_from_buffers(
-                    bm, vertex_data, parse_result
-                )
-
+            # Step 1: Reconstruct vertices from buffer data
+            vertex_map = self._reconstruct_vertices_from_buffers(bm, vertex_data, parse_result)
             if not vertex_map:
-                logger.warning("No vertices reconstructed from buffer data")
+                logger.error("Failed to reconstruct vertices from buffer data")
                 bm.free()
                 return None
 
-            # Reconstruct edges
-            edge_map = {}
-            if edge_data and edge_data.get("count", 0) > 0:
-                edge_map = self._reconstruct_edges_from_buffers(
-                    bm, edge_data, vertex_map, parse_result
-                )
+            # Step 2: Reconstruct non-manifold edges from buffer data
+            edge_map = self._reconstruct_edges_from_buffers(bm, edge_data, vertex_map, parse_result)
 
-            # Reconstruct faces (needed before loops for face references)
-            face_map = {}
-            if face_data and face_data.get("count", 0) > 0:
-                face_map = self._reconstruct_faces_from_buffers(
-                    bm, face_data, vertex_map, edge_map, parse_result
-                )
+            # Step 3: Reconstruct N-gon faces from buffer data
+            face_map = self._reconstruct_faces_from_buffers(bm, face_data, vertex_map, edge_map, parse_result)
 
-            # Apply loop data (UV coordinates, etc.)
-            if loop_data and loop_data.get("count", 0) > 0:
-                self._apply_loop_data_from_buffers(
-                    bm, loop_data, vertex_map, edge_map, face_map, parse_result
-                )
+            # Step 4: Apply loop topology and UV data from buffer data
+            if loop_count > 0:
+                self._apply_loop_data_from_buffers(bm, loop_data, vertex_map, edge_map, face_map, parse_result)
 
-            # Ensure all lookup tables are valid
+            # Step 5: Ensure all lookup tables are valid for non-manifold operations
             safe_ensure_lookup_table(bm.verts, "verts")
-            safe_ensure_lookup_table(bm.edges, "edges")
+            safe_ensure_lookup_table(bm.edges, "edges") 
             safe_ensure_lookup_table(bm.faces, "faces")
             safe_ensure_lookup_table(bm.loops, "loops")
 
+            logger.info(f"Successfully reconstructed non-manifold BMesh: {len(bm.verts)} verts, {len(bm.edges)} edges, {len(bm.faces)} faces")
             return bm
 
         except Exception as e:
-            logger.error(f"Failed to reconstruct BMesh from buffer format: {e}")
+            logger.error(f"Failed to reconstruct non-manifold BMesh: {e}")
             bm.free()
             return None
 
@@ -221,13 +217,12 @@ class BmeshDecoder:
                 logger.warning(f"EXT_bmesh_encoding only supports buffer 0, got buffer {buffer_index}")
                 return None
                 
-            # Get buffer data from parse_result - this is typically buffer0_bytes
-            if hasattr(parse_result, 'buffer0_bytes'):
-                buffer_data = parse_result.buffer0_bytes
-            elif hasattr(parse_result, 'buffer_data'):
-                buffer_data = parse_result.buffer_data
-            else:
-                logger.error("No buffer data found in parse_result")
+            # ParseResult doesn't store buffer data directly, need to re-parse the file
+            try:
+                _, buffer0_bytes = parse_glb(parse_result.filepath.read_bytes())
+                buffer_data = buffer0_bytes
+            except Exception as e:
+                logger.error(f"Failed to re-parse glTF file for buffer access: {e}")
                 return None
             
             byte_offset = buffer_view.get('byteOffset', 0)
