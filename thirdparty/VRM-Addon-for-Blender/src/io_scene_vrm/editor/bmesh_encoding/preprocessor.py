@@ -72,10 +72,6 @@ class BmeshEncodingPreprocessor:
                 logger.info(f"Extracting VRM 1.x BMesh encoding data for armature: {armature_name}")
                 cls._extracted_data[armature_name] = bmesh_encoding_data
                 
-                # Remove the problematic data
-                del vrm_addon_extension["bmesh_encoding"]
-                logger.info(f"Removed BMesh encoding data from VRM 1.x extension")
-                
     @classmethod
     def _find_armature_name_vrm0(cls, vrm0_dict: Dict[str, Any], json_dict: Dict[str, Any]) -> Optional[str]:
         """Find armature name from VRM 0.x humanoid data."""
