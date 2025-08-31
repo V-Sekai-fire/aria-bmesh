@@ -930,6 +930,10 @@ class AbstractBaseVrmImporter(ABC):
         else:
             bone_heuristic = "BLENDER"
         full_vrm_import_success = False
+        # Initialize import protection before glTF import
+        from ..external.io_scene_gltf2_support import init_extras_import
+        init_extras_import()
+        
         with tempfile.TemporaryDirectory() as temp_dir:
             indexed_vrm_filepath = Path(temp_dir, "indexed.vrm")
             indexed_vrm_filepath.write_bytes(pack_glb(json_dict, buffer0_bytes))

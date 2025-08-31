@@ -82,6 +82,19 @@ def init_extras_export() -> None:
     if key not in gltf2_blender_extras.BLACK_LIST:
         gltf2_blender_extras.BLACK_LIST.append(key)
 
+def init_extras_import() -> None:
+    """Initialize import protection for vrm_addon_extension to prevent dictionary assignment."""
+    try:
+        # https://github.com/KhronosGroup/glTF-Blender-IO/blob/6f9d0d9fc1bb30e2b0bb019342ffe86bd67358fc/addons/io_scene_gltf2/blender/com/gltf2_blender_extras.py#L20-L21
+        gltf2_blender_extras = importlib.import_module(
+            "io_scene_gltf2.blender.com.gltf2_blender_extras"
+        )
+    except ModuleNotFoundError:
+        return
+    key = "vrm_addon_extension"
+    if key not in gltf2_blender_extras.BLACK_LIST:
+        gltf2_blender_extras.BLACK_LIST.append(key)
+
 
 def create_export_settings() -> dict[str, object]:
     # https://github.com/KhronosGroup/glTF-Blender-IO/blob/b9bdc358ebf41e5f14be397d0d612cc8d645a09e/addons/io_scene_gltf2/__init__.py#L1054
