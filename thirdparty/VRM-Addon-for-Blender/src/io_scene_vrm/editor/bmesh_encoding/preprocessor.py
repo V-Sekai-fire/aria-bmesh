@@ -50,11 +50,6 @@ class BmeshEncodingPreprocessor:
         if not isinstance(extensions_dict, dict):
             return cleaned_json
             
-        # Process VRM 0.x extensions
-        vrm0_dict = extensions_dict.get("VRM")
-        if isinstance(vrm0_dict, dict):
-            cls._extract_vrm0_bmesh_encoding(vrm0_dict, cleaned_json)
-            
         # Process VRM 1.x extensions  
         vrm1_dict = extensions_dict.get("VRMC_vrm")
         if isinstance(vrm1_dict, dict):
@@ -62,25 +57,6 @@ class BmeshEncodingPreprocessor:
             
         return cleaned_json
         
-    @classmethod
-    def _extract_vrm0_bmesh_encoding(cls, vrm0_dict: Dict[str, Any], json_dict: Dict[str, Any]) -> None:
-        """Extract BMesh encoding data from VRM 0.x extensions."""
-        vrm_addon_extension = vrm0_dict.get("vrm_addon_extension")
-        if not isinstance(vrm_addon_extension, dict):
-            return
-            
-        bmesh_encoding_data = vrm_addon_extension.get("bmesh_encoding")
-        if bmesh_encoding_data is not None:
-            # Find armature name from humanoid data
-            armature_name = cls._find_armature_name_vrm0(vrm0_dict, json_dict)
-            if armature_name:
-                logger.info(f"Extracting VRM 0.x BMesh encoding data for armature: {armature_name}")
-                cls._extracted_data[armature_name] = bmesh_encoding_data
-                
-                # Remove the problematic data
-                del vrm_addon_extension["bmesh_encoding"]
-                logger.info(f"Removed BMesh encoding data from VRM 0.x extension")
-                
     @classmethod
     def _extract_vrm1_bmesh_encoding(cls, vrm1_dict: Dict[str, Any], json_dict: Dict[str, Any]) -> None:
         """Extract BMesh encoding data from VRM 1.x extensions."""

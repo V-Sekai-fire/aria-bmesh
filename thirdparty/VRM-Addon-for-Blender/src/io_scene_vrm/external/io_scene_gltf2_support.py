@@ -85,15 +85,53 @@ def init_extras_export() -> None:
 def init_extras_import() -> None:
     """Initialize import protection for vrm_addon_extension to prevent dictionary assignment."""
     try:
-        # https://github.com/KhronosGroup/glTF-Blender-IO/blob/6f9d0d9fc1bb30e2b0bb019342ffe86bd67358fc/addons/io_scene_gltf2/blender/com/gltf2_blender_extras.py#L20-L21
-        gltf2_blender_extras = importlib.import_module(
-            "io_scene_gltf2.blender.com.gltf2_blender_extras"
-        )
-    except ModuleNotFoundError:
-        return
-    key = "vrm_addon_extension"
-    if key not in gltf2_blender_extras.BLACK_LIST:
-        gltf2_blender_extras.BLACK_LIST.append(key)
+        # Try multiple possible module paths for different glTF2 addon versions
+        gltf2_blender_extras = None
+        module_paths = [
+            "io_scene_gltf2.blender.com.gltf2_blender_extras",
+            "io_scene_gltf2.blender.imp.gltf2_blender_extras", 
+            "io_scene_gltf2.io.com.gltf2_io_extras",
+        ]
+        
+        for module_path in module_paths:
+            try:
+                gltf2_blender_extras = importlib.import_module(module_path)
+                logger.info(f"Successfully imported glTF2 extras module: {module_path}")
+                break
+            except ModuleNotFoundError:
+                continue
+        
+        if gltf2_blender_extras is None:
+            logger.warning("Could not find glTF2 extras module - vrm_addon_extension blacklisting may not work")
+            return
+            
+        key = "vrm_addon_extension"
+        
+        # Check for different possible blacklist attribute names
+        blacklist_attrs = ["BLACK_LIST", "BLACKLIST", "blacklist", "extras_blacklist"]
+        blacklist_found = False
+        
+        for attr_name in blacklist_attrs:
+            if hasattr(gltf2_blender_extras, attr_name):
+                blacklist = getattr(gltf2_blender_extras, attr_name)
+                if isinstance(blacklist, list):
+                    if key not in blacklist:
+                        blacklist.append(key)
+                        logger.info(f"Added '{key}' to glTF2 {attr_name} to prevent dictionary assignment")
+                    else:
+                        logger.info(f"'{key}' already in glTF2 {attr_name}")
+                    blacklist_found = True
+                    break
+        
+        if not blacklist_found:
+            logger.warning("Could not find glTF2 blacklist attribute - vrm_addon_extension may cause import errors")
+            # Try to create our own blacklist if none exists
+            if not hasattr(gltf2_blender_extras, 'BLACK_LIST'):
+                gltf2_blender_extras.BLACK_LIST = [key]
+                logger.info(f"Created new BLACK_LIST with '{key}' in glTF2 extras module")
+            
+    except Exception as e:
+        logger.error(f"Error setting up glTF2 import protection: {e}")
 
 
 def create_export_settings() -> dict[str, object]:
