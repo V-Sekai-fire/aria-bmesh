@@ -49,17 +49,25 @@ class BmeshEncoder:
         
         Returns buffer-based extension data that references glTF buffer views.
         Material indices are handled at the glTF primitive level, not face level.
+        Uses direct iteration to avoid lookup table compatibility issues.
         """
         if not bm.faces:
             return {}
 
-        # Ensure face indices are valid
-        safe_ensure_lookup_table(bm.faces, "faces")
-        safe_ensure_lookup_table(bm.verts, "verts")
-        safe_ensure_lookup_table(bm.edges, "edges")
-        safe_ensure_lookup_table(bm.loops, "loops")
+        # Build index maps manually - more reliable than ensure_lookup_table()
+        vert_to_index = {vert: i for i, vert in enumerate(bm.verts)}
+        edge_to_index = {edge: i for i, edge in enumerate(bm.edges)}
+        face_to_index = {face: i for i, face in enumerate(bm.faces)}
+        
+        # Build loop index map through direct iteration
+        loop_to_index = {}
+        loop_index = 0
+        for face in bm.faces:
+            for loop in face.loops:
+                loop_to_index[loop] = loop_index
+                loop_index += 1
 
-        return self._encode_to_buffer_format(bm)
+        return self._encode_to_buffer_format_direct(bm, vert_to_index, edge_to_index, face_to_index, loop_to_index)
 
     def _encode_to_buffer_format(self, bm: BMesh) -> Dict[str, Any]:
         """
