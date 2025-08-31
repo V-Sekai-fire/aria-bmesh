@@ -1,0 +1,69 @@
+# SPDX-License-Identifier: MIT OR GPL-3.0-or-later
+name: release-please
+
+permissions: {}
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  release-please:
+    runs-on: ubuntu-24.04
+    outputs:
+      release_release_created: ${{ steps.release.outputs.release_created }}
+      release_sha: ${{ steps.release.outputs.sha }}
+      release_tag_name: ${{ steps.release.outputs.tag_name }}
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0 # This seems to make release-please-action more stable
+          persist-credentials: false
+      - uses: googleapis/release-please-action@58fbed0b875bc2f73d60680e175b4c152bf0eb39
+        id: release
+        with:
+          # Normally, skip-github-pull-request should remain false.
+          # However, in this repository's workflow, release-please-action cannot detect
+          # when release-pr is merged, so an unnecessary release-pr with just a version
+          # bump gets created when release-pr is merged.
+          # To prevent this, we first run release-please-action with `skip-github-pull-request: true`.
+          # If release_created is false, we run release-please-action again to create or update
+          # release-pr as usual.
+          skip-github-pull-request: true
+      - uses: googleapis/release-please-action@58fbed0b875bc2f73d60680e175b4c152bf0eb39
+        if: ${{ !steps.release.outputs.release_created }}
+
+  upload-release-archive:
+    runs-on: ubuntu-24.04
+    needs: release-please
+    if: ${{ needs.release-please.result == 'success' && needs.release-please.outputs.release_release_created }}
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+          ref: ${{ needs.release-please.outputs.release_sha }}
+      - name: Install deb packages
+        run: sudo ./tools/install_ubuntu_packages.sh
+      - name: Release
+        run: ./tools/release.sh "$RELEASE_TAG_NAME"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG_NAME: ${{ needs.release-please.outputs.release_tag_name }}
+          BLENDER_EXTENSIONS_TOKEN: ${{ secrets.BLENDER_EXTENSIONS_TOKEN }}
+          # https://github.com/orgs/community/discussions/40405#discussioncomment-8361451
+          GIT_USER_NAME: ${{ format('[BOT] {0}', github.actor) }}
+          GIT_USER_EMAIL: ${{ format('{0}+{1}@users.noreply.github.com', github.actor_id, github.actor) }}
+
+  gh-pages:
+    needs: upload-release-archive
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    uses: ./.github/workflows/gh-pages.yml

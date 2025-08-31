@@ -1,0 +1,69 @@
+{
+  "last-release-sha": "0d3911f25e3c79e2dca21089198387af0474f049",
+  "bootstrap-sha": "d7535ea50e41dc397d57b2687322f102cc21f49a",
+  "draft": true,
+  "draft-pull-request": true,
+  "changelog-sections": [
+    {
+      "type": "BREAKING CHANGE",
+      "section": "💥 Breaking Changes"
+    },
+    {
+      "type": "feat",
+      "section": "🚀 Features"
+    },
+    {
+      "type": "fix",
+      "section": "🐛 Bug Fixes"
+    },
+    {
+      "type": "perf",
+      "section": "📈 Performance Improvements"
+    },
+    {
+      "type": "docs",
+      "section": "📝 Documentation"
+    }
+  ],
+  "packages": {
+    ".": {
+      "pull-request-title-pattern": "chore${scope}: 🤖 release${component} ${version}",
+      "release-type": "simple",
+      "extra-files": [
+        {
+          "type": "generic",
+          "path": "src/io_scene_vrm/__init__.py"
+        },
+        {
+          "type": "generic",
+          "path": "tests/common/test_version.py"
+        },
+        {
+          "type": "toml",
+          "path": "pyproject.toml",
+          "jsonpath": "$.project.version"
+        },
+        {
+          "type": "toml",
+          "path": "typings/pyproject.toml",
+          "jsonpath": "$.project.version"
+        },
+        {
+          "type": "toml",
+          "path": "uv.lock",
+          "jsonpath": "$.package[?(@.name.value == 'io-scene-vrm')].version"
+        },
+        {
+          "type": "toml",
+          "path": "uv.lock",
+          "jsonpath": "$.package[?(@.name.value == 'starry-bpy-typings')].version"
+        },
+        {
+          "type": "toml",
+          "path": "src/io_scene_vrm/blender_manifest.toml",
+          "jsonpath": "$.version"
+        }
+      ]
+    }
+  }
+}

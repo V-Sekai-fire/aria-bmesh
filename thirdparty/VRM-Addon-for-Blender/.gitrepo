@@ -1,0 +1,12 @@
+; DO NOT EDIT (unless you know what you are doing)
+;
+; This subdirectory is a git "subrepo", and this file is maintained by the
+; git-subrepo command. See https://github.com/ingydotnet/git-subrepo#readme
+;
+[subrepo]
+	remote = https://github.com/saturday06/VRM-Addon-for-Blender.git
+	branch = main
+	commit = 841d1cd3fc8bf4d8c2cdb929e3d3adbd970ec1e5
+	parent = ee7ccac394325f9ab3d455b57b3b3b6dabbbbbee
+	method = merge
+	cmdver = 0.4.9

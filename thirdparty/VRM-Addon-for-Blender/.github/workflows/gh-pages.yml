@@ -1,0 +1,79 @@
+# SPDX-License-Identifier: MIT OR GPL-3.0-or-later
+name: gh-pages
+
+permissions: {}
+
+on:
+  push:
+    branches:
+      - main
+      - website
+  workflow_dispatch:
+  workflow_call:
+
+jobs:
+  deploy:
+    environment:
+      name: github-pages
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: denoland/setup-deno@2f7698fd116bfedbd1c3cd4119337b5a787ef53a
+        with:
+          deno-version-file: .dvmrc
+      - name: Build
+        run: |
+          set -x
+
+          if ! curl \
+            --fail \
+            --retry 20 \
+            --retry-all-errors \
+            --show-error \
+            --location \
+            --output releases_latest.json \
+            --header "Accept: application/vnd.github.v3+json" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/latest"; then
+
+            if [ "$GITHUB_REPOSITORY_OWNER" != "saturday06" ]; then
+              exit 0
+            fi
+            exit 1
+          fi
+
+          VITE_VRM_ADDON_FOR_BLENDER_LATEST_VERSION_NAME=$(ruby -rjson -e "puts JSON.parse(File.read('releases_latest.json'))['name']")
+          export VITE_VRM_ADDON_FOR_BLENDER_LATEST_VERSION_NAME
+          VITE_VRM_ADDON_FOR_BLENDER_LATEST_PUBLISH_DATE=$(ruby -rjson -e "puts JSON.parse(File.read('releases_latest.json'))['published_at']")
+          export VITE_VRM_ADDON_FOR_BLENDER_LATEST_PUBLISH_DATE
+
+          deno task docs:build
+
+          mkdir -p docs/.vitepress/dist/releases
+          legacy_addon_release_url=$(jq -r '[.assets[] | select(.name | test("^VRM_Addon_for_Blender-[0-9]"))] | first | .browser_download_url' releases_latest.json)
+          if ! curl \
+            --fail \
+            --retry 20 \
+            --retry-all-errors \
+            --show-error \
+            --location \
+            --output docs/.vitepress/dist/releases/VRM_Addon_for_Blender-release.zip \
+            "$legacy_addon_release_url"; then
+
+            exit 1
+          fi
+
+          # There are image links from README.md and Extensions Platform. Will organize later.
+          mkdir -p docs/.vitepress/dist/images
+          cp -fr docs/assets/images/*.gif docs/.vitepress/dist/images
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: docs/.vitepress/dist
+      - uses: actions/deploy-pages@v4
+        id: deployment
