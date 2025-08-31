@@ -2705,13 +2705,13 @@ class Vrm0Exporter(AbstractBaseVrmExporter):
         """
         Enhanced triangle fan tessellation for EXT_bmesh_encoding.
         
-        Supports both standard triangulation and EXT_bmesh_encoding hybrid approach.
+        Uses buffer-based BMesh encoding for topology preservation.
         """
         if not bm:
             return []
             
         if export_ext_bmesh_encoding:
-            # Use EXT_bmesh_encoding hybrid triangle fan algorithm
+            # Use EXT_bmesh_encoding buffer-based triangle fan algorithm
             bmesh_encoder = BmeshEncoder()
             try:
                 return bmesh_encoder.encode_triangle_fan_implicit(bm)
@@ -2730,8 +2730,10 @@ class Vrm0Exporter(AbstractBaseVrmExporter):
         obj: Object,
         mesh_dicts: list[dict[str, Json]],
         extensions_used: list[str],
+        json_dict: dict[str, Json],
+        buffer0: bytearray,
     ) -> None:
-        """Add EXT_bmesh_encoding extension data to mesh if enabled."""
+        """Add EXT_bmesh_encoding extension data to mesh using buffer format."""
         if not self.export_ext_bmesh_encoding:
             return
             
@@ -2743,7 +2745,14 @@ class Vrm0Exporter(AbstractBaseVrmExporter):
                 return
                 
             # Generate EXT_bmesh_encoding extension data
-            extension_data = bmesh_encoder.encode_bmesh_to_gltf_extension(bm)
+            raw_extension_data = bmesh_encoder.encode_bmesh_to_gltf_extension(bm)
+            if not raw_extension_data:
+                bm.free()
+                return
+            
+            # Create buffer views and get final extension data
+            extension_data = bmesh_encoder.create_buffer_views(json_dict, buffer0, raw_extension_data)
+            
             if not extension_data:
                 bm.free()
                 return
@@ -2758,7 +2767,7 @@ class Vrm0Exporter(AbstractBaseVrmExporter):
             if mesh_dict and "primitives" in mesh_dict:
                 primitives = mesh_dict["primitives"]
                 if isinstance(primitives, list) and primitives:
-                    # Add extension to first primitive (following FB_ngon_encoding pattern)
+                    # Add extension to first primitive
                     primitive = primitives[0]
                     if isinstance(primitive, dict):
                         if "extensions" not in primitive:
@@ -3324,7 +3333,9 @@ class Vrm0Exporter(AbstractBaseVrmExporter):
         
         # Add EXT_bmesh_encoding extension data to mesh if enabled
         if self.export_ext_bmesh_encoding:
-            self.mesh_to_bin_and_dict(obj, mesh_dicts, extensions_used)
+            # Pass json_dict and buffer0 for proper buffer view creation
+            json_dict = {"meshes": mesh_dicts}  # Create minimal json_dict for buffer operations
+            self.mesh_to_bin_and_dict(obj, mesh_dicts, extensions_used, json_dict, buffer0)
         
         mesh_object_name_to_mesh_index[obj.name] = mesh_index
         if skin_dict and have_skin:

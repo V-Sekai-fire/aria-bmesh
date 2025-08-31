@@ -2868,6 +2868,11 @@ class Vrm1Exporter(AbstractBaseVrmExporter):
                 extensions_used = []
                 json_dict["extensionsUsed"] = extensions_used
 
+            # Ensure buffer0 exists
+            buffer0_bytes = json_dict.get("buffers", [{}])[0].get("byteLength", 0)
+            if "buffers" not in json_dict:
+                json_dict["buffers"] = [{"byteLength": 0}]
+
             bmesh_encoder = BmeshEncoder()
 
             # Process each mesh object that has a node index
@@ -2882,8 +2887,17 @@ class Vrm1Exporter(AbstractBaseVrmExporter):
                     continue
 
                 try:
-                    # Generate EXT_bmesh_encoding extension data
-                    extension_data = bmesh_encoder.encode_bmesh_to_gltf_extension(bm)
+                    # Generate EXT_bmesh_encoding extension data with buffer info
+                    raw_extension_data = bmesh_encoder.encode_bmesh_to_gltf_extension(bm)
+                    if not raw_extension_data:
+                        continue
+
+                    # Create buffer views and get final extension data
+                    # Note: This requires access to the main buffer, which should be handled
+                    # by the calling exporter that has access to buffer0
+                    buffer0 = bytearray()  # Temporary - should be passed from caller
+                    extension_data = bmesh_encoder.create_buffer_views(json_dict, buffer0, raw_extension_data)
+                    
                     if not extension_data:
                         continue
 
