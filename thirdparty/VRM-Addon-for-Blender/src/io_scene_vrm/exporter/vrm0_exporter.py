@@ -91,11 +91,11 @@ class Vrm0Exporter(AbstractBaseVrmExporter):
         self,
         context: Context,
         export_objects: list[Object],
+        armature: Object,
         *,
         export_ext_bmesh_encoding: bool = False,
     ) -> None:
-        super().__init__(context)
-        self.export_objects = export_objects
+        super().__init__(context, export_objects, armature)
         self.export_ext_bmesh_encoding = export_ext_bmesh_encoding
 
     @dataclass

@@ -317,14 +317,13 @@ def export_vrm(
                 context,
                 export_objects,
                 armature_object,
-                export_all_influences=export_all_influences,
-                export_lights=export_lights,
-                export_gltf_animations=export_gltf_animations,
+                export_preferences,
             )
         else:
             vrm_exporter = Vrm0Exporter(
                 context,
                 export_objects,
+                armature_object,
                 export_ext_bmesh_encoding=export_preferences.export_ext_bmesh_encoding,
             )
 
