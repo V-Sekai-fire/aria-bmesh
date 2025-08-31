@@ -107,7 +107,7 @@ Like FB_ngon_encoding, the **order of triangles and per-triangle vertex indices*
 
 - For each BMesh face `f`, choose one identifying vertex `v(f)`
 - Break the face into a triangle fan, all anchored at `v(f)`
-- Ensure `v(f) != v(f')` for consecutive faces when possible
+- **Ensure `v(f) != v(f')` for consecutive faces** (mandatory requirement for unambiguous reconstruction)
 - Use enhanced vertex selection for optimal BMesh reconstruction
 
 ### Encoding Process (Implicit Layer)
