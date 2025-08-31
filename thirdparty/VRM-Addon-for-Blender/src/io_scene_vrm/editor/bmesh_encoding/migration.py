@@ -14,7 +14,7 @@ logger = get_logger(__name__)
 
 
 def migrate(context: Context, armature: Object) -> None:
-    """Migrate bmesh_encoding extension data from IDPropertyGroup or user extension storage to proper property groups."""
+    """Migrate bmesh_encoding extension data from preprocessor storage, user extension storage, or IDPropertyGroup to proper property groups."""
     if not armature or armature.type != "ARMATURE":
         return
     
@@ -22,27 +22,19 @@ def migrate(context: Context, armature: Object) -> None:
     if not isinstance(armature_data, Armature):
         return
     
-    # First check if there's stored data from the user extension
-    from ...importer.gltf2_addon_importer_user_extension import Gltf2AddonImporterUserExtension
-    stored_data = Gltf2AddonImporterUserExtension.get_stored_bmesh_encoding_data(armature_data.name)
-    
     bmesh_encoding_data = None
     migration_source = None
     
-    if stored_data:
-        # Use data from user extension storage
-        bmesh_encoding_data = stored_data
-        migration_source = "user_extension_storage"
-        logger.info(f"Found EXT_bmesh_encoding data in user extension storage for armature: {armature.name}")
-    else:
-        # Fallback to checking raw bmesh_encoding data in IDPropertyGroup
-        vrm_addon_extension = armature_data.get("vrm_addon_extension")
-        if isinstance(vrm_addon_extension, IDPropertyGroup):
-            bmesh_encoding_data = vrm_addon_extension.get("bmesh_encoding")
-            if isinstance(bmesh_encoding_data, IDPropertyGroup):
-                migration_source = "idproperty_group"
-                logger.info(f"Found EXT_bmesh_encoding data in IDPropertyGroup for armature: {armature.name}")
+    # First priority: Check preprocessor extracted data
+    from .preprocessor import BmeshEncodingPreprocessor
+    preprocessor_data = BmeshEncodingPreprocessor.get_extracted_data(armature_data.name)
     
+    if preprocessor_data:
+        # Use data from preprocessor extraction
+        bmesh_encoding_data = preprocessor_data
+        migration_source = "preprocessor_extraction"
+        logger.info(f"Found EXT_bmesh_encoding data in preprocessor storage for armature: {armature.name}")
+
     if not bmesh_encoding_data:
         return
     
@@ -74,7 +66,8 @@ def migrate(context: Context, armature: Object) -> None:
     if isinstance(vertices_data, list):
         bmesh_encoding_props.vertices.clear()
         for vertex_data in vertices_data:
-            if not isinstance(vertex_data, IDPropertyGroup):
+            # Handle both IDPropertyGroup (legacy) and dict (from preprocessor)
+            if not isinstance(vertex_data, (IDPropertyGroup, dict)):
                 continue
             vertex_prop = bmesh_encoding_props.vertices.add()
             migrate_vertex_properties(vertex_data, vertex_prop)
@@ -84,7 +77,8 @@ def migrate(context: Context, armature: Object) -> None:
     if isinstance(edges_data, list):
         bmesh_encoding_props.edges.clear()
         for edge_data in edges_data:
-            if not isinstance(edge_data, IDPropertyGroup):
+            # Handle both IDPropertyGroup (legacy) and dict (from preprocessor)
+            if not isinstance(edge_data, (IDPropertyGroup, dict)):
                 continue
             edge_prop = bmesh_encoding_props.edges.add()
             migrate_edge_properties(edge_data, edge_prop)
@@ -94,7 +88,8 @@ def migrate(context: Context, armature: Object) -> None:
     if isinstance(loops_data, list):
         bmesh_encoding_props.loops.clear()
         for loop_data in loops_data:
-            if not isinstance(loop_data, IDPropertyGroup):
+            # Handle both IDPropertyGroup (legacy) and dict (from preprocessor)
+            if not isinstance(loop_data, (IDPropertyGroup, dict)):
                 continue
             loop_prop = bmesh_encoding_props.loops.add()
             migrate_loop_properties(loop_data, loop_prop)
@@ -104,7 +99,8 @@ def migrate(context: Context, armature: Object) -> None:
     if isinstance(faces_data, list):
         bmesh_encoding_props.faces.clear()
         for face_data in faces_data:
-            if not isinstance(face_data, IDPropertyGroup):
+            # Handle both IDPropertyGroup (legacy) and dict (from preprocessor)
+            if not isinstance(face_data, (IDPropertyGroup, dict)):
                 continue
             face_prop = bmesh_encoding_props.faces.add()
             migrate_face_properties(face_data, face_prop)
@@ -112,8 +108,8 @@ def migrate(context: Context, armature: Object) -> None:
     logger.info(f"EXT_bmesh_encoding migration completed for armature: {armature.name}")
 
 
-def migrate_vertex_properties(vertex_data: IDPropertyGroup, vertex_prop) -> None:
-    """Migrate vertex property data."""
+def migrate_vertex_properties(vertex_data, vertex_prop) -> None:
+    """Migrate vertex property data from dict or IDPropertyGroup."""
     vertex_id = vertex_data.get("id")
     if isinstance(vertex_id, int):
         vertex_prop.id = vertex_id
@@ -123,8 +119,8 @@ def migrate_vertex_properties(vertex_data: IDPropertyGroup, vertex_prop) -> None
         vertex_prop.position = (float(position[0]), float(position[1]), float(position[2]))
 
 
-def migrate_edge_properties(edge_data: IDPropertyGroup, edge_prop) -> None:
-    """Migrate edge property data."""
+def migrate_edge_properties(edge_data, edge_prop) -> None:
+    """Migrate edge property data from dict or IDPropertyGroup."""
     edge_id = edge_data.get("id")
     if isinstance(edge_id, int):
         edge_prop.id = edge_id
@@ -146,8 +142,8 @@ def migrate_edge_properties(edge_data: IDPropertyGroup, edge_prop) -> None:
         edge_prop.manifold_unknown = manifold_unknown
 
 
-def migrate_loop_properties(loop_data: IDPropertyGroup, loop_prop) -> None:
-    """Migrate loop property data."""
+def migrate_loop_properties(loop_data, loop_prop) -> None:
+    """Migrate loop property data from dict or IDPropertyGroup."""
     loop_id = loop_data.get("id")
     if isinstance(loop_id, int):
         loop_prop.id = loop_id
@@ -185,8 +181,8 @@ def migrate_loop_properties(loop_data: IDPropertyGroup, loop_prop) -> None:
         loop_prop.uv = (float(uv[0]), float(uv[1]))
 
 
-def migrate_face_properties(face_data: IDPropertyGroup, face_prop) -> None:
-    """Migrate face property data."""
+def migrate_face_properties(face_data, face_prop) -> None:
+    """Migrate face property data from dict or IDPropertyGroup."""
     face_id = face_data.get("id")
     if isinstance(face_id, int):
         face_prop.id = face_id
