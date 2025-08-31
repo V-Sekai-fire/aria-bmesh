@@ -74,6 +74,7 @@ from .abstract_base_vrm_exporter import (
     force_apply_modifiers,
 )
 from ..editor.bmesh_encoding.encoding import BmeshEncoder
+import bmesh
 
 logger = get_logger(__name__)
 
@@ -119,6 +120,34 @@ class Vrm1Exporter(AbstractBaseVrmExporter):
         self.extras_material_name_key = (
             INTERNAL_NAME_PREFIX + self.export_id + "MaterialName"
         )
+        
+        # Storage for original mesh topology before triangulation
+        self.original_mesh_topology: dict[str, dict] = {}
+
+    def capture_original_mesh_topology(self) -> None:
+        """Capture original mesh topology before glTF triangulation occurs."""
+        if not self.export_ext_bmesh_encoding:
+            return
+            
+        bmesh_encoder = BmeshEncoder()
+        
+        for obj in self.export_objects:
+            if obj.type != "MESH":
+                continue
+                
+            # Create BMesh from original object to preserve topology
+            bm = bmesh_encoder.create_bmesh_from_mesh(obj)
+            if not bm:
+                continue
+                
+            try:
+                # Encode the original topology data
+                extension_data = bmesh_encoder.encode_bmesh_to_gltf_extension(bm)
+                if extension_data:
+                    self.original_mesh_topology[obj.name] = extension_data
+                    logger.info(f"Captured original topology for mesh '{obj.name}'")
+            finally:
+                bm.free()
 
     @contextmanager
     def overwrite_object_visibility_and_selection(self) -> Iterator[None]:
@@ -2377,6 +2406,9 @@ class Vrm1Exporter(AbstractBaseVrmExporter):
                 self.assign_export_custom_properties(armature_data),
                 tempfile.TemporaryDirectory() as temp_dir,
             ):
+                # Capture original mesh topology before any triangulation occurs
+                self.capture_original_mesh_topology()
+                
                 force_apply_modifiers_to_objects(self.context, mesh_compat_object_names)
 
                 filepath = Path(temp_dir, "out.glb")
@@ -2871,54 +2903,46 @@ class Vrm1Exporter(AbstractBaseVrmExporter):
 
             bmesh_encoder = BmeshEncoder()
 
-            # Process each mesh object that has a node index
+            # Process each mesh object that has stored original topology
             for object_name, node_index in object_name_to_index_dict.items():
                 obj = self.context.blend_data.objects.get(object_name)
                 if not obj or obj.type != "MESH":
                     continue
 
-                # Create BMesh from object for extension data
-                bm = bmesh_encoder.create_bmesh_from_mesh(obj)
-                if not bm:
+                # Use stored original topology instead of current triangulated mesh
+                raw_extension_data = self.original_mesh_topology.get(object_name)
+                if not raw_extension_data:
+                    logger.warning(f"No original topology stored for mesh '{object_name}', skipping EXT_bmesh_encoding")
                     continue
 
-                try:
-                    # Generate EXT_bmesh_encoding extension data with buffer info
-                    raw_extension_data = bmesh_encoder.encode_bmesh_to_gltf_extension(bm)
-                    if not raw_extension_data:
-                        continue
+                # Create buffer views and get final extension data
+                extension_data = bmesh_encoder.create_buffer_views(json_dict, buffer0, raw_extension_data)
+                
+                if not extension_data:
+                    continue
 
-                    # Create buffer views and get final extension data
-                    extension_data = bmesh_encoder.create_buffer_views(json_dict, buffer0, raw_extension_data)
-                    
-                    if not extension_data:
-                        continue
+                # Find the corresponding mesh in the glTF data
+                mesh_name = obj.data.name if obj.data else obj.name
+                mesh_dict = next(
+                    (mesh for mesh in mesh_dicts if mesh.get("name") == mesh_name),
+                    None,
+                )
 
-                    # Find the corresponding mesh in the glTF data
-                    mesh_name = obj.data.name if obj.data else obj.name
-                    mesh_dict = next(
-                        (mesh for mesh in mesh_dicts if mesh.get("name") == mesh_name),
-                        None,
-                    )
+                if mesh_dict and "primitives" in mesh_dict:
+                    primitives = mesh_dict["primitives"]
+                    if isinstance(primitives, list) and primitives:
+                        # Add extension to first primitive
+                        primitive = primitives[0]
+                        if isinstance(primitive, dict):
+                            if "extensions" not in primitive:
+                                primitive["extensions"] = {}
+                            primitive["extensions"]["EXT_bmesh_encoding"] = extension_data
 
-                    if mesh_dict and "primitives" in mesh_dict:
-                        primitives = mesh_dict["primitives"]
-                        if isinstance(primitives, list) and primitives:
-                            # Add extension to first primitive
-                            primitive = primitives[0]
-                            if isinstance(primitive, dict):
-                                if "extensions" not in primitive:
-                                    primitive["extensions"] = {}
-                                primitive["extensions"]["EXT_bmesh_encoding"] = extension_data
+                            # Add to extensions used
+                            if "EXT_bmesh_encoding" not in extensions_used:
+                                extensions_used.append("EXT_bmesh_encoding")
 
-                                # Add to extensions used
-                                if "EXT_bmesh_encoding" not in extensions_used:
-                                    extensions_used.append("EXT_bmesh_encoding")
-
-                                logger.info(f"Added EXT_bmesh_encoding to mesh '{mesh_name}' in VRM 1.0")
-
-                finally:
-                    bm.free()
+                            logger.info(f"Added EXT_bmesh_encoding to mesh '{mesh_name}' in VRM 1.0 using original topology")
 
         except Exception as e:
             logger.error(f"Failed to add EXT_bmesh_encoding to VRM 1.0 meshes: {e}")
