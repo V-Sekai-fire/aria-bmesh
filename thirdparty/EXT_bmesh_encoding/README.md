@@ -61,10 +61,7 @@ glTF buffer format (all data stored in buffer views):
               "vertices": {
                 "count": 10000,
                 "positions": 10,
-                "edges": 11,
-                "attributes": {
-                  "_WEIGHT": 12
-                }
+                "edges": 11
               },
               "edges": {
                 "count": 15000,
