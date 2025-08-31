@@ -405,35 +405,6 @@ The following BMesh structures are preserved through buffer-based encoding:
 - **Face-Loop**: One-to-many (face has loops for each corner)
 - **Loop Navigation**: Circular lists around faces and radially around edges
 
-## Buffer Storage Patterns
-
-### Fixed-Size Data
-
-Data with known size per element (positions, normals, topology):
-
-```
-Buffer Layout: [elem0][elem1][elem2]...[elemN]
-Access: element[i] = buffer[i * elementSize : (i+1) * elementSize]
-```
-
-### Variable-Length Data
-
-Data with varying size per element (face vertices, edge faces):
-
-```
-Data Buffer:   [face0_verts][face1_verts][face2_verts]...
-Offset Buffer: [0][face0_end][face1_end][face2_end][total_end]
-Access: face[i] = data[offset[i] : offset[i+1]]
-```
-
-### Attribute Storage
-
-All attributes follow glTF 2.0 conventions:
-
-- **Standard Attributes**: POSITION, NORMAL, TANGENT, TEXCOORD_0, COLOR_0, etc.
-- **Custom Attributes**: Must use `_` prefix (e.g., `_WEIGHT`, `_CUSTOM_DATA`)
-- **Buffer Views**: Each attribute stored in separate buffer view with proper typing
-
 ## Design Decision: No Per-Face Materials (Tombstone)
 
 Per-face materials were considered and intentionally excluded from EXT_bmesh_encoding.
