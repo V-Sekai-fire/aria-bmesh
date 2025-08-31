@@ -44,75 +44,7 @@ This approach ensures graceful degradation: files work in any glTF 2.0 viewer wi
 
 ## Extension Structure
 
-**Small Meshes** (JSON format):
-
-```json
-{
-  "meshes": [
-    {
-      "name": "BMeshModel",
-      "primitives": [
-        {
-          "indices": 0,
-          "attributes": {
-            "POSITION": 1,
-            "NORMAL": 2,
-            "TEXCOORD_0": 3
-          },
-          "material": 0,
-          "mode": 4,
-          "extensions": {
-            "EXT_bmesh_encoding": {
-              "vertices": [
-                {
-                  "id": 0,
-                  "position": [0.0, 0.0, 0.0],
-                  "edges": [0, 1],
-                  "attributes": { "weight": 0.5 }
-                }
-              ],
-              "edges": [
-                {
-                  "id": 0,
-                  "vertices": [0, 1],
-                  "faces": [0],
-                  "manifold": true,
-                  "attributes": { "crease": 0.0 }
-                }
-              ],
-              "loops": [
-                {
-                  "id": 0,
-                  "vertex": 0,
-                  "edge": 0,
-                  "face": 0,
-                  "next": 1,
-                  "prev": 2,
-                  "radial_next": 0,
-                  "radial_prev": 0,
-                  "attributes": { "TEXCOORD_0": [0.0, 0.0] }
-                }
-              ],
-              "faces": [
-                {
-                  "id": 0,
-                  "vertices": [0, 1, 2],
-                  "edges": [0, 1, 2],
-                  "loops": [0, 1, 2],
-                  "normal": [0.0, 0.0, 1.0],
-                  "materialIndex": 1
-                }
-              ]
-            }
-          }
-        }
-      ]
-    }
-  ]
-}
-```
-
-**Large Meshes** (glTF buffer format):
+glTF buffer format:
 
 ```json
 {

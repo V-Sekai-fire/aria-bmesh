@@ -2,7 +2,7 @@
     "$schema": "http://json-schema.org/draft-04/schema",
     "title": "EXT_bmesh_encoding glTF extension",
     "type": "object",
-    "description": "glTF extension for hybrid BMesh encoding with graceful degradation to glTF 2.0 core",
+    "description": "glTF extension for BMesh encoding with buffer-based storage for optimal performance",
     "allOf": [
         {
             "$ref": "glTFProperty.schema.json"
@@ -10,315 +10,136 @@
     ],
     "properties": {
         "vertices": {
-            "oneOf": [
-                {
-                    "type": "array",
-                    "description": "Explicit BMesh vertex data (JSON format for small meshes)",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "id": {
-                                "type": "integer",
-                                "minimum": 0
-                            },
-                            "position": {
-                                "type": "array",
-                                "items": {
-                                    "type": "number"
-                                },
-                                "minItems": 3,
-                                "maxItems": 3
-                            },
-                            "edges": {
-                                "type": "array",
-                                "items": {
-                                    "type": "integer",
-                                    "minimum": 0
-                                }
-                            },
-                            "attributes": {
-                                "type": "object"
-                            }
-                        },
-                        "required": ["id", "position"]
-                    }
+            "type": "object",
+            "description": "Buffer-based vertex data",
+            "properties": {
+                "count": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "Number of vertices"
                 },
-                {
+                "positions": {
+                    "allOf": [{"$ref": "glTFid.schema.json"}],
+                    "description": "Buffer view containing vertex positions (Vec3<f32>)"
+                },
+                "edges": {
+                    "allOf": [{"$ref": "glTFid.schema.json"}],
+                    "description": "Buffer view containing vertex-edge adjacency data"
+                },
+                "attributes": {
                     "type": "object",
-                    "description": "Buffer-based vertex data (for large meshes)",
-                    "properties": {
-                        "count": {
-                            "type": "integer",
-                            "minimum": 0,
-                            "description": "Number of vertices"
-                        },
-                        "positions": {
-                            "allOf": [{"$ref": "glTFid.schema.json"}],
-                            "description": "Buffer view containing vertex positions (Vec3<f32>)"
-                        },
-                        "edges": {
-                            "allOf": [{"$ref": "glTFid.schema.json"}],
-                            "description": "Buffer view containing edge connectivity data"
-                        },
-                        "attributes": {
-                            "type": "object",
-                            "description": "Buffer views for vertex attributes",
-                            "patternProperties": {
-                                "^[a-zA-Z_][a-zA-Z0-9_]*$": {
-                                    "allOf": [{"$ref": "glTFid.schema.json"}]
-                                }
-                            }
+                    "description": "Buffer views for vertex attributes",
+                    "patternProperties": {
+                        "^(POSITION|NORMAL|TANGENT|COLOR_[0-9]+|TEXCOORD_[0-9]+|JOINTS_[0-9]+|WEIGHTS_[0-9]+|_[A-Z_][A-Z0-9_]*)$": {
+                            "allOf": [{"$ref": "glTFid.schema.json"}]
                         }
-                    },
-                    "required": ["count", "positions"]
+                    }
                 }
-            ]
+            },
+            "required": ["count", "positions"]
         },
         "edges": {
-            "oneOf": [
-                {
-                    "type": "array",
-                    "description": "Explicit BMesh edge data (JSON format for small meshes)",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "id": {
-                                "type": "integer",
-                                "minimum": 0
-                            },
-                            "vertices": {
-                                "type": "array",
-                                "items": {
-                                    "type": "integer",
-                                    "minimum": 0
-                                },
-                                "minItems": 2,
-                                "maxItems": 2
-                            },
-                            "faces": {
-                                "type": "array",
-                                "items": {
-                                    "type": "integer",
-                                    "minimum": 0
-                                }
-                            },
-                            "manifold": {
-                                "oneOf": [
-                                    {"type": "boolean"},
-                                    {"type": "null"}
-                                ],
-                                "description": "Manifold status: true (confirmed manifold), false (confirmed non-manifold), null (unknown/not checked)"
-                            },
-                            "attributes": {
-                                "type": "object"
-                            }
-                        },
-                        "required": ["id", "vertices"]
-                    }
+            "type": "object",
+            "description": "Buffer-based edge data",
+            "properties": {
+                "count": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "Number of edges"
                 },
-                {
+                "vertices": {
+                    "allOf": [{"$ref": "glTFid.schema.json"}],
+                    "description": "Buffer view containing edge vertex pairs (2×u32 per edge)"
+                },
+                "faces": {
+                    "allOf": [{"$ref": "glTFid.schema.json"}],
+                    "description": "Buffer view containing edge-face adjacency data"
+                },
+                "manifold": {
+                    "allOf": [{"$ref": "glTFid.schema.json"}],
+                    "description": "Buffer view containing manifold flags (u8 per edge: 0=non-manifold, 1=manifold, 255=unknown)"
+                },
+                "attributes": {
                     "type": "object",
-                    "description": "Buffer-based edge data (for large meshes)",
-                    "properties": {
-                        "count": {
-                            "type": "integer",
-                            "minimum": 0,
-                            "description": "Number of edges"
-                        },
-                        "vertices": {
-                            "allOf": [{"$ref": "glTFid.schema.json"}],
-                            "description": "Buffer view containing edge vertex pairs (2×u32 per edge)"
-                        },
-                        "faces": {
-                            "allOf": [{"$ref": "glTFid.schema.json"}],
-                            "description": "Buffer view containing edge-face adjacency data"
-                        },
-                        "manifold": {
-                            "allOf": [{"$ref": "glTFid.schema.json"}],
-                            "description": "Buffer view containing manifold flags (u8 per edge)"
-                        },
-                        "attributes": {
-                            "type": "object",
-                            "description": "Buffer views for edge attributes",
-                            "patternProperties": {
-                                "^[a-zA-Z_][a-zA-Z0-9_]*$": {
-                                    "allOf": [{"$ref": "glTFid.schema.json"}]
-                                }
-                            }
+                    "description": "Buffer views for edge attributes",
+                    "patternProperties": {
+                        "^_[A-Z_][A-Z0-9_]*$": {
+                            "allOf": [{"$ref": "glTFid.schema.json"}]
                         }
-                    },
-                    "required": ["count", "vertices"]
+                    }
                 }
-            ]
+            },
+            "required": ["count", "vertices"]
         },
         "loops": {
-            "oneOf": [
-                {
-                    "type": "array",
-                    "description": "Explicit BMesh loop data (JSON format for small meshes)",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "id": {
-                                "type": "integer",
-                                "minimum": 0
-                            },
-                            "vertex": {
-                                "type": "integer",
-                                "minimum": 0
-                            },
-                            "edge": {
-                                "type": "integer",
-                                "minimum": 0
-                            },
-                            "face": {
-                                "type": "integer",
-                                "minimum": 0
-                            },
-                            "next": {
-                                "type": "integer",
-                                "minimum": 0
-                            },
-                            "prev": {
-                                "type": "integer",
-                                "minimum": 0
-                            },
-                            "radial_next": {
-                                "type": "integer",
-                                "minimum": 0
-                            },
-                            "radial_prev": {
-                                "type": "integer",
-                                "minimum": 0
-                            },
-                            "attributes": {
-                                "type": "object"
-                            }
-                        },
-                        "required": ["id", "vertex", "edge", "face"]
-                    }
+            "type": "object",
+            "description": "Buffer-based loop data",
+            "properties": {
+                "count": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "Number of loops"
                 },
-                {
+                "topology": {
+                    "allOf": [{"$ref": "glTFid.schema.json"}],
+                    "description": "Buffer view containing loop topology (vertex, edge, face, next, prev, radial_next, radial_prev as 7×u32 per loop)"
+                },
+                "attributes": {
                     "type": "object",
-                    "description": "Buffer-based loop data (for large meshes)",
-                    "properties": {
-                        "count": {
-                            "type": "integer",
-                            "minimum": 0,
-                            "description": "Number of loops"
-                        },
-                        "topology": {
-                            "allOf": [{"$ref": "glTFid.schema.json"}],
-                            "description": "Buffer view containing loop topology (vertex, edge, face, next, prev, radial_next, radial_prev as 7×u32 per loop)"
-                        },
-                        "attributes": {
-                            "type": "object",
-                            "description": "Buffer views for loop attributes (use glTF 2.0 standard names)",
-                            "patternProperties": {
-                                "^(TEXCOORD_[0-9]+|COLOR_[0-9]+|[A-Z_][A-Z0-9_]*)$": {
-                                    "allOf": [{"$ref": "glTFid.schema.json"}]
-                                }
-                            }
+                    "description": "Buffer views for loop attributes (follows glTF 2.0 attribute naming)",
+                    "patternProperties": {
+                        "^(TEXCOORD_[0-9]+|COLOR_[0-9]+|_[A-Z_][A-Z0-9_]*)$": {
+                            "allOf": [{"$ref": "glTFid.schema.json"}]
                         }
-                    },
-                    "required": ["count", "topology"]
+                    }
                 }
-            ]
+            },
+            "required": ["count", "topology"]
         },
         "faces": {
-            "oneOf": [
-                {
-                    "type": "array",
-                    "description": "Explicit BMesh face data (JSON format for small meshes)",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "id": {
-                                "type": "integer",
-                                "minimum": 0
-                            },
-                            "vertices": {
-                                "type": "array",
-                                "items": {
-                                    "type": "integer",
-                                    "minimum": 0
-                                },
-                                "minItems": 3
-                            },
-                            "edges": {
-                                "type": "array",
-                                "items": {
-                                    "type": "integer",
-                                    "minimum": 0
-                                }
-                            },
-                            "loops": {
-                                "type": "array",
-                                "items": {
-                                    "type": "integer",
-                                    "minimum": 0
-                                }
-                            },
-                            "normal": {
-                                "type": "array",
-                                "items": {
-                                    "type": "number"
-                                },
-                                "minItems": 3,
-                                "maxItems": 3
-                            },
-                            "attributes": {
-                                "type": "object"
-                            }
-                        },
-                        "required": ["id", "vertices"]
-                    }
+            "type": "object",
+            "description": "Buffer-based face data",
+            "properties": {
+                "count": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "Number of faces"
                 },
-                {
+                "vertices": {
+                    "allOf": [{"$ref": "glTFid.schema.json"}],
+                    "description": "Buffer view containing face vertex lists (variable length, u32 indices)"
+                },
+                "edges": {
+                    "allOf": [{"$ref": "glTFid.schema.json"}],
+                    "description": "Buffer view containing face edge lists (variable length, u32 indices)"
+                },
+                "loops": {
+                    "allOf": [{"$ref": "glTFid.schema.json"}],
+                    "description": "Buffer view containing face loop lists (variable length, u32 indices)"
+                },
+                "normals": {
+                    "allOf": [{"$ref": "glTFid.schema.json"}],
+                    "description": "Buffer view containing face normals (Vec3<f32> per face)"
+                },
+                "offsets": {
+                    "allOf": [{"$ref": "glTFid.schema.json"}],
+                    "description": "Buffer view containing face data offsets for variable-length arrays (u32 per face + 1)"
+                },
+                "attributes": {
                     "type": "object",
-                    "description": "Buffer-based face data (for large meshes)",
-                    "properties": {
-                        "count": {
-                            "type": "integer",
-                            "minimum": 0,
-                            "description": "Number of faces"
-                        },
-                        "vertices": {
-                            "allOf": [{"$ref": "glTFid.schema.json"}],
-                            "description": "Buffer view containing face vertex lists (variable length)"
-                        },
-                        "edges": {
-                            "allOf": [{"$ref": "glTFid.schema.json"}],
-                            "description": "Buffer view containing face edge lists (variable length)"
-                        },
-                        "loops": {
-                            "allOf": [{"$ref": "glTFid.schema.json"}],
-                            "description": "Buffer view containing face loop lists (variable length)"
-                        },
-                        "normals": {
-                            "allOf": [{"$ref": "glTFid.schema.json"}],
-                            "description": "Buffer view containing face normals (Vec3<f32> per face)"
-                        },
-                        "offsets": {
-                            "allOf": [{"$ref": "glTFid.schema.json"}],
-                            "description": "Buffer view containing face data offsets for variable-length arrays"
-                        },
-                        "attributes": {
-                            "type": "object",
-                            "description": "Buffer views for face attributes",
-                            "patternProperties": {
-                                "^[a-zA-Z_][a-zA-Z0-9_]*$": {
-                                    "allOf": [{"$ref": "glTFid.schema.json"}]
-                                }
-                            }
+                    "description": "Buffer views for face attributes",
+                    "patternProperties": {
+                        "^_[A-Z_][A-Z0-9_]*$": {
+                            "allOf": [{"$ref": "glTFid.schema.json"}]
                         }
-                    },
-                    "required": ["count", "vertices", "offsets"]
+                    }
                 }
-            ]
+            },
+            "required": ["count", "vertices", "offsets"]
         },
         "extensions": {},
         "extras": {}
     },
-    "additionalProperties": false
+    "additionalProperties": false,
+    "required": ["vertices", "edges", "loops", "faces"]
 }
