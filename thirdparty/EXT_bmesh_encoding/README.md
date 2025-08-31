@@ -85,8 +85,7 @@ glTF buffer format (all data stored in buffer views):
                 "edges": 19,
                 "loops": 20,
                 "offsets": 21,
-                "normals": 22,
-                "materials": 23
+                "normals": 22
               }
             }
           }
@@ -124,38 +123,6 @@ Like FB_ngon_encoding, the **order of triangles and per-triangle vertex indices*
 3. **Topology Inference**: Infer BMesh edge and loop structure from face connectivity
 4. **Validation**: Validate reconstructed BMesh for topological consistency
 
-## Buffer-Based Encoding (Explicit Layer)
-
-### BMesh → glTF (Encoding)
-
-```javascript
-// Convert complete BMesh to glTF with buffer-based encoding
-const gltfData = encodeBmeshToGltf(bmesh);
-
-// Produces:
-// 1. Standard glTF triangle mesh (implicit triangle fans)
-// 2. Extension data with complete BMesh topology in buffers
-// 3. All attributes preserved using glTF 2.0 naming conventions
-```
-
-### glTF → BMesh (Decoding)
-
-```javascript
-// Full BMesh reconstruction from buffer data
-const completeBmesh = decodeBmeshFromBuffers(gltfData);
-
-// Includes:
-// - All vertices with positions and attributes
-// - All edges with adjacency and manifold flags
-// - All loops with navigation and attributes (UVs, colors)
-// - All faces with boundaries and attributes
-// - Complete topological relationships
-
-// Graceful degradation when extension unsupported
-const polygons = decodeBmeshImplicit(gltfTriangles);
-// Produces basic polygon list from triangle fan reconstruction
-```
-
 ## Buffer Layouts
 
 All BMesh topology data is stored in glTF buffers using efficient binary layouts:
@@ -172,7 +139,7 @@ All BMesh topology data is stored in glTF buffers using efficient binary layouts
 - **faces**: Variable-length face lists with offset indexing
 - **manifold**: `u8` (1 byte per edge) - manifold status flag
   - `0`: Confirmed non-manifold
-  - `1`: Confirmed manifold 
+  - `1`: Confirmed manifold
   - `255`: Unknown status
 - **attributes**: Custom edge data with `_` prefix naming
 
@@ -184,7 +151,7 @@ All BMesh topology data is stored in glTF buffers using efficient binary layouts
 ### Face Buffers
 
 - **vertices**: Variable-length vertex index lists
-- **edges**: Variable-length edge index lists  
+- **edges**: Variable-length edge index lists
 - **loops**: Variable-length loop index lists
 - **offsets**: `[u32; 3]` (12 bytes per face) - start offsets for vertices, edges, loops arrays
 - **normals**: `Vec3<f32>` (12 bytes per face) - face normal vectors
@@ -195,7 +162,7 @@ All BMesh topology data is stored in glTF buffers using efficient binary layouts
 For arrays with variable length (face vertices, edges, loops), data is stored as:
 
 1. **Packed Data Buffer**: Concatenated array elements
-2. **Offset Buffer**: Start indices for each element's data  
+2. **Offset Buffer**: Start indices for each element's data
 3. **Access Pattern**: `data[offsets[i]:offsets[i+1]]` gives element i's array
 
 ## Implementation Requirements
@@ -249,9 +216,18 @@ function encodeBmeshImplicit(bmeshFaces) {
 
   for (const face of bmeshFaces) {
     const vertices = face.vertices;
-    // Select anchor: use smallest vertex index different from previous anchor
+    // MANDATORY: Select anchor different from previous face
     const candidates = vertices.filter((v) => v !== prevAnchor);
-    const anchor = candidates.length > 0 ? Math.min(...candidates) : vertices[0];
+    const anchor =
+      candidates.length > 0 ? Math.min(...candidates) : vertices[0];
+
+    // This MUST be different from prevAnchor for correct reconstruction
+    if (anchor === prevAnchor && vertices.length > 1) {
+      throw new Error(
+        "Cannot ensure v(f) != v(f') - algorithm requirement violated"
+      );
+    }
+
     prevAnchor = anchor;
 
     const n = vertices.length;
@@ -273,7 +249,7 @@ function encodeBmeshImplicit(bmeshFaces) {
 function decodeBmeshFromBuffers(gltfData) {
   const bmesh = {
     vertices: new Map(),
-    edges: new Map(), 
+    edges: new Map(),
     loops: new Map(),
     faces: new Map(),
   };
@@ -283,11 +259,19 @@ function decodeBmeshFromBuffers(gltfData) {
   const bufferViews = gltfData.bufferViews;
 
   // Reconstruct vertices from buffer data
-  const vertexPositions = readBufferView(buffers, bufferViews, ext.vertices.positions);
+  const vertexPositions = readBufferView(
+    buffers,
+    bufferViews,
+    ext.vertices.positions
+  );
   for (let i = 0; i < ext.vertices.count; i++) {
     bmesh.vertices.set(i, {
       id: i,
-      position: [vertexPositions[i*3], vertexPositions[i*3+1], vertexPositions[i*3+2]],
+      position: [
+        vertexPositions[i * 3],
+        vertexPositions[i * 3 + 1],
+        vertexPositions[i * 3 + 2],
+      ],
       edges: [],
       attributes: {},
     });
@@ -295,32 +279,37 @@ function decodeBmeshFromBuffers(gltfData) {
 
   // Reconstruct edges from buffer data
   const edgeVertices = readBufferView(buffers, bufferViews, ext.edges.vertices);
-  const manifoldFlags = readBufferView(buffers, bufferViews, ext.edges.manifold);
-  
+  const manifoldFlags = readBufferView(
+    buffers,
+    bufferViews,
+    ext.edges.manifold
+  );
+
   for (let i = 0; i < ext.edges.count; i++) {
     const edge = {
       id: i,
-      vertices: [edgeVertices[i*2], edgeVertices[i*2+1]],
+      vertices: [edgeVertices[i * 2], edgeVertices[i * 2 + 1]],
       faces: [],
-      manifold: manifoldFlags[i] === 1 ? true : (manifoldFlags[i] === 0 ? false : null),
+      manifold:
+        manifoldFlags[i] === 1 ? true : manifoldFlags[i] === 0 ? false : null,
       attributes: {},
     };
     bmesh.edges.set(i, edge);
   }
 
-  // Reconstruct loops from buffer data  
+  // Reconstruct loops from buffer data
   const loopTopology = readBufferView(buffers, bufferViews, ext.loops.topology);
-  
+
   for (let i = 0; i < ext.loops.count; i++) {
     bmesh.loops.set(i, {
       id: i,
-      vertex: loopTopology[i*7],
-      edge: loopTopology[i*7+1], 
-      face: loopTopology[i*7+2],
-      next: loopTopology[i*7+3],
-      prev: loopTopology[i*7+4],
-      radial_next: loopTopology[i*7+5],
-      radial_prev: loopTopology[i*7+6],
+      vertex: loopTopology[i * 7],
+      edge: loopTopology[i * 7 + 1],
+      face: loopTopology[i * 7 + 2],
+      next: loopTopology[i * 7 + 3],
+      prev: loopTopology[i * 7 + 4],
+      radial_next: loopTopology[i * 7 + 5],
+      radial_prev: loopTopology[i * 7 + 6],
       attributes: {},
     });
   }
@@ -329,17 +318,21 @@ function decodeBmeshFromBuffers(gltfData) {
   const faceVertices = readBufferView(buffers, bufferViews, ext.faces.vertices);
   const faceOffsets = readBufferView(buffers, bufferViews, ext.faces.offsets);
   const faceNormals = readBufferView(buffers, bufferViews, ext.faces.normals);
-  
+
   for (let i = 0; i < ext.faces.count; i++) {
-    const vertexStart = faceOffsets[i*3];
-    const vertexEnd = faceOffsets[i*3+1];
-    
+    const vertexStart = faceOffsets[i * 3];
+    const vertexEnd = faceOffsets[i * 3 + 1];
+
     const face = {
       id: i,
       vertices: faceVertices.slice(vertexStart, vertexEnd),
       edges: [],
       loops: [],
-      normal: [faceNormals[i*3], faceNormals[i*3+1], faceNormals[i*3+2]],
+      normal: [
+        faceNormals[i * 3],
+        faceNormals[i * 3 + 1],
+        faceNormals[i * 3 + 2],
+      ],
       attributes: {},
     };
     bmesh.faces.set(i, face);
@@ -351,19 +344,17 @@ function decodeBmeshFromBuffers(gltfData) {
 function readBufferView(buffers, bufferViews, bufferViewIndex) {
   const bufferView = bufferViews[bufferViewIndex];
   const buffer = buffers[bufferView.buffer];
-  return new Uint32Array(buffer, bufferView.byteOffset, bufferView.byteLength / 4);
+  return new Uint32Array(
+    buffer,
+    bufferView.byteOffset,
+    bufferView.byteLength / 4
+  );
 }
 ```
 
 ## glTF Schema
 
 - **JSON schema**: [glTF.EXT_bmesh_encoding.schema.json](schema/glTF.EXT_bmesh_encoding.schema.json)
-
-## Implementation Status
-
-- [x] Core buffer-based encoding specification
-- [x] Enhanced triangle fan algorithm design  
-- [x] Complete glTF 2.0 buffer integration
 
 ## Known Implementations
 
@@ -380,20 +371,20 @@ The following BMesh structures are preserved through buffer-based encoding:
 - **Connected Edges**: Edge adjacency data in variable-length format
 - **Attributes**: Standard glTF attributes (POSITION, NORMAL, TEXCOORD_0, etc.)
 
-### Edge  
+### Edge
 
 - **Vertices**: Two vertex references stored as `[u32, u32]` pairs
 - **Adjacent Faces**: Variable-length face lists with offset indexing
 - **Manifold Status**: Single byte flag compatible with EXT_mesh_manifold
   - `0`: Confirmed non-manifold
-  - `1`: Confirmed manifold (oriented 2-manifold) 
+  - `1`: Confirmed manifold (oriented 2-manifold)
   - `255`: Unknown status (no manifold checking performed)
 - **Attributes**: Custom edge data with `_` prefix naming
 
 ### Loop
 
 - **Vertex**: Corner vertex reference
-- **Edge**: Outgoing edge from vertex  
+- **Edge**: Outgoing edge from vertex
 - **Face**: Containing face reference
 - **Navigation**: Next/previous loop in face, radial next/previous around edge
 - **Topology**: All navigation stored as 7×u32 array per loop
@@ -402,7 +393,7 @@ The following BMesh structures are preserved through buffer-based encoding:
 ### Face
 
 - **Vertices**: Variable-length vertex index lists with offset indexing
-- **Edges**: Variable-length edge index lists with offset indexing  
+- **Edges**: Variable-length edge index lists with offset indexing
 - **Loops**: Variable-length loop index lists with offset indexing
 - **Normal**: Face normal vector stored as Vec3<f32>
 - **Attributes**: Custom face data with `_` prefix naming
@@ -410,7 +401,7 @@ The following BMesh structures are preserved through buffer-based encoding:
 ### Topological Relationships
 
 - **Vertex-Edge**: One-to-many (vertex connects to multiple edges)
-- **Edge-Face**: One-to-many (edge shared by multiple faces, enables non-manifold)  
+- **Edge-Face**: One-to-many (edge shared by multiple faces, enables non-manifold)
 - **Face-Loop**: One-to-many (face has loops for each corner)
 - **Loop Navigation**: Circular lists around faces and radially around edges
 
@@ -425,7 +416,7 @@ Buffer Layout: [elem0][elem1][elem2]...[elemN]
 Access: element[i] = buffer[i * elementSize : (i+1) * elementSize]
 ```
 
-### Variable-Length Data  
+### Variable-Length Data
 
 Data with varying size per element (face vertices, edge faces):
 
@@ -443,133 +434,30 @@ All attributes follow glTF 2.0 conventions:
 - **Custom Attributes**: Must use `_` prefix (e.g., `_WEIGHT`, `_CUSTOM_DATA`)
 - **Buffer Views**: Each attribute stored in separate buffer view with proper typing
 
-## Material Handling Strategy
+## Design Decision: No Per-Face Materials (Tombstone)
 
-EXT_bmesh_encoding resolves the tension between glTF's primitive-per-material model and BMesh's per-face materials through a dual representation approach:
+Per-face materials were considered and intentionally excluded from EXT_bmesh_encoding.
 
-### Export Strategy (BMesh → glTF)
+BMesh natively supports per-face material assignment. Some 3D modeling workflows assign materials at the face level. Would enable perfect round-trip preservation of BMesh material data
 
-**Primitive Optimization + Extension Preservation:**
+glTF is fundamentally built around primitive-per-material for rendering efficiency.
 
-```javascript
-// 1. Group faces by material for optimal glTF primitives
-function exportBmeshToGltf(bmesh) {
-  const materialGroups = new Map();
-  
-  // Group faces by material
-  for (const face of bmesh.faces) {
-    const materialId = face.materialIndex;
-    if (!materialGroups.has(materialId)) {
-      materialGroups.set(materialId, []);
-    }
-    materialGroups.get(materialId).push(face);
-  }
-  
-  // Create one glTF primitive per material for performance
-  const primitives = [];
-  for (const [materialId, faces] of materialGroups) {
-    const triangles = triangulateFaces(faces);
-    primitives.push({
-      material: materialId,
-      indices: createIndexBuffer(triangles),
-      attributes: createAttributeBuffers(triangles),
-      extensions: {
-        EXT_bmesh_encoding: createBmeshExtension(faces) // Subset for this material
-      }
-    });
-  }
-  
-  // Store complete per-face material mapping in extension
-  const allFaceMaterials = bmesh.faces.map(face => face.materialIndex);
-  
-  return {
-    primitives: primitives,
-    // Complete BMesh extension data includes original per-face materials
-    completeBmeshExtension: {
-      // ... other BMesh data
-      faces: {
-        materials: createBufferView(allFaceMaterials), // Preserves original assignment
-        // ... other face data
-      }
-    }
-  };
-}
-```
+Per-face materials would require massive primitive explosion or complex material switching.
 
-### Import Strategy (glTF → BMesh)
+Modern graphics APIs expect material grouping for optimal performance.
 
-**Extension Data as Authoritative Source:**
+Per-face materials interfere with clean triangle fan reconstruction.
 
-```javascript
-// Reconstruct BMesh using extension data, not primitive materials
-function importGltfToBmesh(gltfData) {
-  const bmesh = {
-    vertices: new Map(),
-    edges: new Map(),
-    loops: new Map(), 
-    faces: new Map(),
-  };
-  
-  const ext = gltfData.extensions.EXT_bmesh_encoding;
-  
-  // Reconstruct faces with original per-face materials
-  const faceMaterials = readBufferView(buffers, bufferViews, ext.faces.materials);
-  
-  for (let i = 0; i < ext.faces.count; i++) {
-    const face = {
-      id: i,
-      vertices: getFaceVertices(i, ext.faces),
-      materialIndex: faceMaterials[i], // Use extension data, not primitive material
-      // ... other face data
-    };
-    bmesh.faces.set(i, face);
-  }
-  
-  return bmesh;
-}
-```
+Material boundaries would complicate optimal anchor vertex selection.
 
-### Implementation Guidelines
+Adds significant complexity to both encoding and decoding logic.
 
-**For Exporters:**
-- **Performance First**: Group faces by material into separate glTF primitives
-- **Preserve Fidelity**: Store original per-face material indices in extension data
-- **Handle Mixed Materials**: Split multi-material BMesh objects into multiple primitives
-- **Maintain Mapping**: Keep clear mapping between extension face indices and primitive faces
+Multi-material objects can be split into single-material meshes during export.
 
-**For Importers:**
-- **Extension Authority**: Use extension face materials as the authoritative source
-- **Ignore Primitive Materials**: Primitive materials are optimization artifacts
-- **Graceful Fallback**: When extension unavailable, infer materials from primitive assignment
-- **Validate Consistency**: Check that extension data matches primitive grouping when possible
+Aligns with established glTF workflows and tool expectations.
 
-**For Viewers:**
-- **Standard Rendering**: Use glTF primitives for efficient rendering (one draw call per material)
-- **BMesh Operations**: Use extension data for topology operations requiring per-face materials
-- **Hybrid Approach**: Combine both representations based on use case requirements
+Prioritizes rendering efficiency over edge case flexibility.
 
-This approach ensures both **rendering performance** (optimized primitives) and **data fidelity** (complete BMesh reconstruction) without forcing a choice between them.
+During Export separate multi-material BMesh into single-material submeshes.
 
-## Oriented 2-Manifold Validation
-
-EXT_bmesh_encoding supports EXT_mesh_manifold compatibility through BMesh topology:
-
-- **Halfedge Information**: Loop radial navigation provides halfedge structure
-- **Manifold Detection**: Edge manifold flags indicate 2-manifold compliance  
-- **Topology Validation**: Complete BMesh structure enables manifold verification
-- **Graceful Handling**: Unknown manifold status (255) allows safe processing
-
-## Implementation Notes
-
-### Performance Considerations
-
-- **Buffer Alignment**: Ensure proper 4-byte alignment for all buffer data
-- **Memory Layout**: Optimize buffer view organization for sequential access
-- **Compression**: Consider buffer compression for large datasets
-
-### Compatibility  
-
-- **glTF 2.0 Core**: Files work in any glTF 2.0 viewer via standard triangle mesh
-- **Extension Support**: Enhanced features available when EXT_bmesh_encoding supported
-- **Attribute Naming**: Strict adherence to glTF 2.0 attribute naming conventions
-- **Buffer Management**: Standard glTF buffer view and accessor patterns throughout
+EXT_bmesh_encoding focuses purely on **topology preservation** rather than solving the material assignment problem, which is better handled at the glTF primitive and node levels.
