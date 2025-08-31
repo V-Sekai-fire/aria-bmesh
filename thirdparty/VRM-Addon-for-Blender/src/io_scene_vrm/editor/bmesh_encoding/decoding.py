@@ -14,6 +14,28 @@ from ...common.logger import get_logger
 logger = get_logger(__name__)
 
 
+def safe_ensure_lookup_table(bmesh_seq, seq_name="unknown"):
+    """
+    Safely ensure lookup table using appropriate method for each BMesh sequence type.
+    
+    BMLoopSeq doesn't have ensure_lookup_table() method in Blender's API,
+    but it does have index_update() which serves the same purpose.
+    """
+    if hasattr(bmesh_seq, 'ensure_lookup_table'):
+        try:
+            bmesh_seq.ensure_lookup_table()
+        except Exception as e:
+            logger.debug(f"Failed to ensure lookup table for {seq_name}: {e}")
+    elif hasattr(bmesh_seq, 'index_update'):
+        try:
+            bmesh_seq.index_update()
+            logger.debug(f"Used index_update() for {seq_name} (BMLoopSeq compatibility)")
+        except Exception as e:
+            logger.debug(f"Failed to update indices for {seq_name}: {e}")
+    else:
+        logger.debug(f"No lookup table method available for {seq_name}")
+
+
 class BmeshDecoder:
     """Handles BMesh reconstruction from EXT_bmesh_encoding extension data."""
 
@@ -103,10 +125,10 @@ class BmeshDecoder:
                 )
 
             # Ensure all lookup tables are valid
-            bm.verts.ensure_lookup_table()
-            bm.edges.ensure_lookup_table()
-            bm.faces.ensure_lookup_table()
-            bm.loops.ensure_lookup_table()
+            safe_ensure_lookup_table(bm.verts, "verts")
+            safe_ensure_lookup_table(bm.edges, "edges")
+            safe_ensure_lookup_table(bm.faces, "faces")
+            safe_ensure_lookup_table(bm.loops, "loops")
 
             return bm
 

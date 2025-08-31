@@ -14,6 +14,28 @@ from ...common.logger import get_logger
 logger = get_logger(__name__)
 
 
+def safe_ensure_lookup_table(bmesh_seq, seq_name="unknown"):
+    """
+    Safely ensure lookup table using appropriate method for each BMesh sequence type.
+    
+    BMLoopSeq doesn't have ensure_lookup_table() method in Blender's API,
+    but it does have index_update() which serves the same purpose.
+    """
+    if hasattr(bmesh_seq, 'ensure_lookup_table'):
+        try:
+            bmesh_seq.ensure_lookup_table()
+        except Exception as e:
+            logger.debug(f"Failed to ensure lookup table for {seq_name}: {e}")
+    elif hasattr(bmesh_seq, 'index_update'):
+        try:
+            bmesh_seq.index_update()
+            logger.debug(f"Used index_update() for {seq_name} (BMLoopSeq compatibility)")
+        except Exception as e:
+            logger.debug(f"Failed to update indices for {seq_name}: {e}")
+    else:
+        logger.debug(f"No lookup table method available for {seq_name}")
+
+
 class BmeshEncoder:
     """Handles buffer-based BMesh encoding for EXT_bmesh_encoding extension."""
 
@@ -32,10 +54,10 @@ class BmeshEncoder:
             return {}
 
         # Ensure face indices are valid
-        bm.faces.ensure_lookup_table()
-        bm.verts.ensure_lookup_table()
-        bm.edges.ensure_lookup_table()
-        bm.loops.ensure_lookup_table()
+        safe_ensure_lookup_table(bm.faces, "faces")
+        safe_ensure_lookup_table(bm.verts, "verts")
+        safe_ensure_lookup_table(bm.edges, "edges")
+        safe_ensure_lookup_table(bm.loops, "loops")
 
         return self._encode_to_buffer_format(bm)
 
@@ -440,10 +462,10 @@ class BmeshEncoder:
 
         # Ensure all lookup tables are valid
         try:
-            bm.faces.ensure_lookup_table()
-            bm.verts.ensure_lookup_table()
-            bm.loops.ensure_lookup_table()
-            bm.edges.ensure_lookup_table()
+            safe_ensure_lookup_table(bm.faces, "faces")
+            safe_ensure_lookup_table(bm.verts, "verts")
+            safe_ensure_lookup_table(bm.loops, "loops")
+            safe_ensure_lookup_table(bm.edges, "edges")
         except Exception as e:
             logger.error(f"Failed to ensure BMesh lookup tables: {e}")
             return []
@@ -707,10 +729,10 @@ class BmeshEncoder:
             bm.transform(mesh_obj.matrix_world)
             
             # Ensure all lookup tables are valid
-            bm.faces.ensure_lookup_table()
-            bm.verts.ensure_lookup_table()
-            bm.edges.ensure_lookup_table()
-            bm.loops.ensure_lookup_table()
+            safe_ensure_lookup_table(bm.faces, "faces")
+            safe_ensure_lookup_table(bm.verts, "verts")
+            safe_ensure_lookup_table(bm.edges, "edges")
+            safe_ensure_lookup_table(bm.loops, "loops")
             
             # Calculate face indices for consistent material assignment
             for face in bm.faces:
