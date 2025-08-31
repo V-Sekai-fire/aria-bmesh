@@ -405,7 +405,7 @@ The following BMesh structures are preserved through buffer-based encoding:
 - **Face-Loop**: One-to-many (face has loops for each corner)
 - **Loop Navigation**: Circular lists around faces and radially around edges
 
-## Design Decision: No Per-Face Materials (Tombstone)
+## Design Decision: No Per-Face Materials
 
 Per-face materials were considered and intentionally excluded from EXT_bmesh_encoding.
 
