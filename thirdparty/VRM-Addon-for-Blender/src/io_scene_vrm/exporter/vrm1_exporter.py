@@ -2409,6 +2409,10 @@ class Vrm1Exporter(AbstractBaseVrmExporter):
             setup_humanoid_t_pose(self.context, self.armature),
             self.overwrite_object_visibility_and_selection(),
         ):
+            # Capture original mesh topology before backup objects are created
+            # This ensures topology is stored with original object names that will be used during lookup
+            self.capture_original_mesh_topology()
+            
             with (
                 self.disable_constraints(self.context),
                 self.hide_mtoon1_outline_geometry_nodes(self.context),
@@ -2418,8 +2422,6 @@ class Vrm1Exporter(AbstractBaseVrmExporter):
                 self.assign_export_custom_properties(armature_data),
                 tempfile.TemporaryDirectory() as temp_dir,
             ):
-                # Capture original mesh topology before any triangulation occurs
-                self.capture_original_mesh_topology()
                 
                 force_apply_modifiers_to_objects(self.context, mesh_compat_object_names)
 
