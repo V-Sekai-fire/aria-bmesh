@@ -730,16 +730,23 @@ class BmeshEncoder:
         This integrates with the glTF export pipeline to create proper buffer views
         that reference the main glTF buffer.
         """
+        logger.info("Creating buffer views for EXT_bmesh_encoding...")
+        
         if not extension_data:
+            logger.warning("No extension data provided to create_buffer_views")
             return {}
+
+        logger.debug(f"Extension data keys: {list(extension_data.keys())}")
 
         # Helper to create buffer view
         def create_buffer_view(data_info: Dict[str, Any]) -> Optional[int]:
             if "data" not in data_info:
+                logger.debug("No 'data' key in data_info")
                 return None
                 
             data = data_info["data"]
             if not data:
+                logger.debug("Empty data in data_info")
                 return None
 
             # Align buffer to 4-byte boundary
@@ -763,6 +770,7 @@ class BmeshEncoder:
             json_dict["bufferViews"].append(buffer_view)
             buffer0.extend(data)
             
+            logger.debug(f"Created buffer view {buffer_view_index} with {len(data)} bytes")
             return buffer_view_index
 
         # Process vertices
@@ -770,17 +778,24 @@ class BmeshEncoder:
         if "vertices" in extension_data:
             vertex_data = extension_data["vertices"]
             result_vertices = {"count": vertex_data["count"]}
+            logger.info(f"Processing vertices: count={vertex_data['count']}")
             
-            if positions_idx := create_buffer_view(vertex_data["positions"]):
+            positions_idx = create_buffer_view(vertex_data["positions"])
+            if positions_idx is not None:
                 result_vertices["positions"] = positions_idx
+                logger.debug(f"Added positions buffer view: {positions_idx}")
                 
-            if edges_idx := create_buffer_view(vertex_data.get("edges", {})):
+            edges_idx = create_buffer_view(vertex_data.get("edges", {}))
+            if edges_idx is not None:
                 result_vertices["edges"] = edges_idx
+                logger.debug(f"Added vertex edges buffer view: {edges_idx}")
             
             # Add edge offsets buffer view
             if "edgeOffsets" in vertex_data:
-                if offsets_idx := create_buffer_view(vertex_data["edgeOffsets"]):
+                offsets_idx = create_buffer_view(vertex_data["edgeOffsets"])
+                if offsets_idx is not None:
                     result_vertices["edgeOffsets"] = offsets_idx
+                    logger.debug(f"Added vertex edge offsets buffer view: {offsets_idx}")
                 
             result_data["vertices"] = result_vertices
 
@@ -788,20 +803,29 @@ class BmeshEncoder:
         if "edges" in extension_data:
             edge_data = extension_data["edges"]
             result_edges = {"count": edge_data["count"]}
+            logger.info(f"Processing edges: count={edge_data['count']}")
             
-            if vertices_idx := create_buffer_view(edge_data["vertices"]):
+            vertices_idx = create_buffer_view(edge_data["vertices"])
+            if vertices_idx is not None:
                 result_edges["vertices"] = vertices_idx
+                logger.debug(f"Added edge vertices buffer view: {vertices_idx}")
                 
-            if faces_idx := create_buffer_view(edge_data.get("faces", {})):
+            faces_idx = create_buffer_view(edge_data.get("faces", {}))
+            if faces_idx is not None:
                 result_edges["faces"] = faces_idx
+                logger.debug(f"Added edge faces buffer view: {faces_idx}")
             
             # Add face offsets buffer view
             if "faceOffsets" in edge_data:
-                if face_offsets_idx := create_buffer_view(edge_data["faceOffsets"]):
+                face_offsets_idx = create_buffer_view(edge_data["faceOffsets"])
+                if face_offsets_idx is not None:
                     result_edges["faceOffsets"] = face_offsets_idx
+                    logger.debug(f"Added edge face offsets buffer view: {face_offsets_idx}")
                 
-            if manifold_idx := create_buffer_view(edge_data.get("manifold", {})):
+            manifold_idx = create_buffer_view(edge_data.get("manifold", {}))
+            if manifold_idx is not None:
                 result_edges["manifold"] = manifold_idx
+                logger.debug(f"Added edge manifold buffer view: {manifold_idx}")
                 
             result_data["edges"] = result_edges
 
@@ -809,16 +833,21 @@ class BmeshEncoder:
         if "loops" in extension_data:
             loop_data = extension_data["loops"]
             result_loops = {"count": loop_data["count"]}
+            logger.info(f"Processing loops: count={loop_data['count']}")
             
-            if topology_idx := create_buffer_view(loop_data["topology"]):
+            topology_idx = create_buffer_view(loop_data["topology"])
+            if topology_idx is not None:
                 result_loops["topology"] = topology_idx
+                logger.debug(f"Added loop topology buffer view: {topology_idx}")
                 
             # Handle UV attributes with glTF naming
             if "attributes" in loop_data:
                 result_loops["attributes"] = {}
                 for attr_name, attr_data in loop_data["attributes"].items():
-                    if attr_idx := create_buffer_view(attr_data):
+                    attr_idx = create_buffer_view(attr_data)
+                    if attr_idx is not None:
                         result_loops["attributes"][attr_name] = attr_idx
+                        logger.debug(f"Added loop attribute '{attr_name}' buffer view: {attr_idx}")
                         
             result_data["loops"] = result_loops
 
@@ -826,12 +855,16 @@ class BmeshEncoder:
         if "faces" in extension_data:
             face_data = extension_data["faces"]
             result_faces = {"count": face_data["count"]}
+            logger.info(f"Processing faces: count={face_data['count']}")
             
             for key in ["vertices", "edges", "loops", "normals", "offsets"]:
                 if key in face_data:
-                    if buffer_idx := create_buffer_view(face_data[key]):
+                    buffer_idx = create_buffer_view(face_data[key])
+                    if buffer_idx is not None:
                         result_faces[key] = buffer_idx
+                        logger.debug(f"Added face {key} buffer view: {buffer_idx}")
                         
             result_data["faces"] = result_faces
 
+        logger.info(f"Buffer view creation complete. Result data keys: {list(result_data.keys())}")
         return result_data
