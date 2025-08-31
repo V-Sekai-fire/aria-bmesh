@@ -1,6 +1,6 @@
 {
     "$schema": "http://json-schema.org/draft-04/schema",
-    "title": "VENDOR_bmesh_encoding glTF extension",
+    "title": "EXT_bmesh_encoding glTF extension",
     "type": "object",
     "description": "glTF extension for hybrid BMesh encoding with graceful degradation to glTF 2.0 core",
     "allOf": [

@@ -1,4 +1,4 @@
-# VENDOR_bmesh_encoding
+# EXT_bmesh_encoding
 
 ## Contributors
 
@@ -62,7 +62,7 @@ This approach ensures graceful degradation: files work in any glTF 2.0 viewer wi
           "material": 0,
           "mode": 4,
           "extensions": {
-            "VENDOR_bmesh_encoding": {
+            "EXT_bmesh_encoding": {
               "vertices": [
                 {
                   "id": 0,
@@ -130,7 +130,7 @@ This approach ensures graceful degradation: files work in any glTF 2.0 viewer wi
           "material": 0,
           "mode": 4,
           "extensions": {
-            "VENDOR_bmesh_encoding": {
+            "EXT_bmesh_encoding": {
               "vertices": {
                 "count": 10000,
                 "positions": 10,
@@ -230,7 +230,7 @@ const polygons = decodeBmeshImplicit(gltfTriangles);
 
 ## Implementation Requirements
 
-All VENDOR_bmesh_encoding implementations must support:
+All EXT_bmesh_encoding implementations must support:
 
 1. **Hybrid Encoding**: Both implicit triangle fan and explicit BMesh topology data
 2. **glTF 2.0 Compatibility**: Files work in any glTF 2.0 viewer via triangle fan fallback
@@ -361,7 +361,7 @@ function reconstructCompleteBMesh(gltfData) {
     faces: new Map(),
   };
 
-  const extension = gltfData.extensions.VENDOR_bmesh_encoding;
+  const extension = gltfData.extensions.EXT_bmesh_encoding;
 
   // Reconstruct vertices
   for (const vertexData of extension.vertices) {
@@ -429,7 +429,7 @@ function reconstructCompleteBMesh(gltfData) {
 
 ## glTF Schema Updates
 
-- **JSON schema**: [glTF.VENDOR_bmesh_encoding.schema.json](schema/glTF.VENDOR_bmesh_encoding.schema.json)
+- **JSON schema**: [glTF.EXT_bmesh_encoding.schema.json](schema/glTF.EXT_bmesh_encoding.schema.json)
 
 ## Implementation Status
 
@@ -524,7 +524,7 @@ For arrays with variable length (face vertices, edges, loops), data is stored as
 
 ### Oriented 2-Manifold Validation
 
-VENDOR_bmesh_encoding supports EXT_mesh_manifold compatibility through BMesh topology validation:
+EXT_bmesh_encoding supports EXT_mesh_manifold compatibility through BMesh topology validation:
 
 - **Halfedge Matching**: Each edge's loops provide halfedge information for manifold validation
 - **Radial Navigation**: Loop radial_next/radial_prev enable halfedge pair detection
