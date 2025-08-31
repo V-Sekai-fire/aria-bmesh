@@ -345,6 +345,16 @@ class BmeshDecoder:
         if not face_vertices_data:
             return face_map
 
+        # Read face normals if available
+        normals_buffer_index = face_data.get("normals")
+        face_normals = None
+        if normals_buffer_index is not None:
+            face_normals = self._read_buffer_view(parse_result, normals_buffer_index, 5126, face_count, "VEC3")
+            if face_normals:
+                logger.info(f"Successfully read {len(face_normals)//3} face normals from buffer")
+            else:
+                logger.warning("Failed to read face normals from buffer")
+
         # Create faces
         for i in range(face_count):
             vertex_start = offsets[i]
@@ -364,8 +374,28 @@ class BmeshDecoder:
                 try:
                     face = bm.faces.new(face_verts)
                     face_map[i] = face
+                    
+                    # Apply stored face normal if available
+                    if face_normals and i * 3 + 2 < len(face_normals):
+                        normal_idx = i * 3
+                        stored_normal = Vector((
+                            face_normals[normal_idx],
+                            face_normals[normal_idx + 1], 
+                            face_normals[normal_idx + 2]
+                        ))
+                        
+                        # Apply the stored normal to the face
+                        face.normal = stored_normal
+                        logger.debug(f"Applied stored normal {stored_normal} to face {i}")
+                        
                 except ValueError as e:
                     logger.warning(f"Failed to create face {i}: {e}")
+
+        # Log normal preservation status
+        if face_normals:
+            logger.info(f"Face normal preservation: Applied normals to {len(face_map)} faces")
+        else:
+            logger.warning("Face normal preservation: No normals found in buffer data")
 
         return face_map
 
