@@ -139,7 +139,6 @@ class BmeshEncodingLoopPropertyGroup(PropertyGroup):
         name="UV",
         description="UV coordinates",
         size=2,
-        subtype="XY",
     )
     
     if TYPE_CHECKING:
