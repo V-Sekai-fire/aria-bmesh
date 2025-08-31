@@ -245,6 +245,10 @@ class BmeshEncoder:
         manifold_buffer = bytearray()
         manifold_struct = struct.Struct("<B")
         
+        # Create smooth flags (custom attribute: u8 per edge)
+        smooth_buffer = bytearray()
+        smooth_struct = struct.Struct("<B")
+        
         for edge in bm.edges:
             # Pack edge vertices using manual index mapping (required by schema)
             vert0_idx = vert_to_index.get(edge.verts[0])
@@ -267,6 +271,9 @@ class BmeshEncoder:
                 manifold_buffer.extend(manifold_struct.pack(0))
             else:
                 manifold_buffer.extend(manifold_struct.pack(255))  # Unknown
+            
+            # Pack smooth flag (1=smooth, 0=hard edge)
+            smooth_buffer.extend(smooth_struct.pack(1 if edge.smooth else 0))
 
         result = {
             "count": edge_count,
@@ -292,6 +299,18 @@ class BmeshEncoder:
         if manifold_buffer:
             result["manifold"] = {
                 "data": manifold_buffer,
+                "target": 34962,  # GL_ARRAY_BUFFER
+                "componentType": 5121,  # GL_UNSIGNED_BYTE
+                "type": "SCALAR",
+                "count": edge_count
+            }
+        
+        # Add smooth flags as custom attribute following schema
+        if smooth_buffer:
+            if "attributes" not in result:
+                result["attributes"] = {}
+            result["attributes"]["_SMOOTH"] = {
+                "data": smooth_buffer,
                 "target": 34962,  # GL_ARRAY_BUFFER
                 "componentType": 5121,  # GL_UNSIGNED_BYTE
                 "type": "SCALAR",
@@ -600,6 +619,10 @@ class BmeshEncoder:
         manifold_buffer = bytearray()
         manifold_struct = struct.Struct("<B")
         
+        # Create smooth flags (custom attribute: u8 per edge)
+        smooth_buffer = bytearray()
+        smooth_struct = struct.Struct("<B")
+        
         for edge in bm.edges:
             # Pack edge vertices (required by schema)
             vertices_buffer.extend(vertex_pair_struct.pack(
@@ -619,6 +642,9 @@ class BmeshEncoder:
                 manifold_buffer.extend(manifold_struct.pack(0))
             else:
                 manifold_buffer.extend(manifold_struct.pack(255))  # Unknown
+            
+            # Pack smooth flag (1=smooth, 0=hard edge)
+            smooth_buffer.extend(smooth_struct.pack(1 if edge.smooth else 0))
 
         result = {
             "count": edge_count,
@@ -644,6 +670,18 @@ class BmeshEncoder:
         if manifold_buffer:
             result["manifold"] = {
                 "data": manifold_buffer,
+                "target": 34962,  # GL_ARRAY_BUFFER
+                "componentType": 5121,  # GL_UNSIGNED_BYTE
+                "type": "SCALAR",
+                "count": edge_count
+            }
+        
+        # Add smooth flags as custom attribute following schema
+        if smooth_buffer:
+            if "attributes" not in result:
+                result["attributes"] = {}
+            result["attributes"]["_SMOOTH"] = {
+                "data": smooth_buffer,
                 "target": 34962,  # GL_ARRAY_BUFFER
                 "componentType": 5121,  # GL_UNSIGNED_BYTE
                 "type": "SCALAR",
@@ -1283,6 +1321,10 @@ class BmeshEncoder:
         manifold_buffer = bytearray()
         manifold_struct = struct.Struct("<B")
         
+        # Create smooth flags (custom attribute: u8 per edge)
+        smooth_buffer = bytearray()
+        smooth_struct = struct.Struct("<B")
+        
         # Build edge-to-face adjacency using native APIs
         edge_face_map = {}
         for poly in mesh.polygons:
@@ -1312,6 +1354,9 @@ class BmeshEncoder:
                  manifold_buffer.extend(manifold_struct.pack(1 if is_manifold else 0))
             else:
                  manifold_buffer.extend(manifold_struct.pack(255)) # Unknown
+            
+            # Pack smooth flag (1=smooth, 0=hard edge)
+            smooth_buffer.extend(smooth_struct.pack(1 if edge.use_edge_sharp == False else 0))
 
         result = {
             "count": edge_count,
@@ -1337,6 +1382,18 @@ class BmeshEncoder:
         if manifold_buffer:
             result["manifold"] = {
                 "data": manifold_buffer,
+                "target": 34962,  # GL_ARRAY_BUFFER
+                "componentType": 5121,  # GL_UNSIGNED_BYTE
+                "type": "SCALAR",
+                "count": edge_count
+            }
+        
+        # Add smooth flags as custom attribute following schema
+        if smooth_buffer:
+            if "attributes" not in result:
+                result["attributes"] = {}
+            result["attributes"]["_SMOOTH"] = {
+                "data": smooth_buffer,
                 "target": 34962,  # GL_ARRAY_BUFFER
                 "componentType": 5121,  # GL_UNSIGNED_BYTE
                 "type": "SCALAR",

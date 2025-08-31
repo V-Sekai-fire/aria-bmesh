@@ -182,7 +182,15 @@ class BmeshDecoder:
         try:
             # Update the mesh with BMesh data
             bm.to_mesh(mesh)
+            
+            # Ensure proper mesh finalization for smooth shading
             mesh.update()
+            mesh.calc_loop_triangles()
+            
+            # Force recalculation of normals to respect edge smooth flags
+            mesh.calc_normals_split()
+            
+            logger.info("Successfully applied BMesh to Blender mesh with smooth shading preservation")
             return True
             
         except Exception as e:
@@ -379,6 +387,17 @@ class BmeshDecoder:
         if not edge_vertices:
             return edge_map
 
+        # Read edge smooth flags if available
+        smooth_flags = None
+        attributes = edge_data.get("attributes", {})
+        if "_SMOOTH" in attributes:
+            smooth_buffer_index = attributes["_SMOOTH"]
+            smooth_flags = self._read_buffer_view(parse_result, smooth_buffer_index, 5121, edge_count, "SCALAR")
+            if smooth_flags:
+                logger.info(f"Successfully read {len(smooth_flags)} edge smooth flags from buffer")
+            else:
+                logger.warning("Failed to read edge smooth flags from buffer")
+
         # Create edges
         for i in range(edge_count):
             vert_idx1 = edge_vertices[i * 2]
@@ -391,12 +410,29 @@ class BmeshDecoder:
                 try:
                     edge = bm.edges.new([vert1, vert2])
                     edge_map[i] = edge
+                    
+                    # Apply smooth flag if available
+                    if smooth_flags and i < len(smooth_flags):
+                        edge.smooth = bool(smooth_flags[i])
+                        logger.debug(f"Applied smooth flag {bool(smooth_flags[i])} to edge {i}")
+                        
                 except ValueError:
                     # Edge already exists, find it
                     for existing_edge in bm.edges:
                         if set(existing_edge.verts) == {vert1, vert2}:
                             edge_map[i] = existing_edge
+                            
+                            # Apply smooth flag to existing edge if available
+                            if smooth_flags and i < len(smooth_flags):
+                                existing_edge.smooth = bool(smooth_flags[i])
+                                logger.debug(f"Applied smooth flag {bool(smooth_flags[i])} to existing edge {i}")
                             break
+
+        # Log smooth flag preservation status
+        if smooth_flags:
+            logger.info(f"Edge smooth flag preservation: Applied smooth flags to {len(edge_map)} edges")
+        else:
+            logger.warning("Edge smooth flag preservation: No smooth flags found in buffer data")
 
         return edge_map
 

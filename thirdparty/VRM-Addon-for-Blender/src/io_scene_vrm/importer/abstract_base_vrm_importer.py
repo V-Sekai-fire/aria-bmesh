@@ -952,6 +952,7 @@ class AbstractBaseVrmImporter(ABC):
                         bone_heuristic=bone_heuristic,
                         guess_original_bind_pose=False,
                         disable_bone_shape=True,
+                        import_scene_as_collection=False,
                     )
                 )
                 full_vrm_import_success = True
@@ -978,6 +979,7 @@ class AbstractBaseVrmImporter(ABC):
                             bone_heuristic=bone_heuristic,
                             guess_original_bind_pose=False,
                             disable_bone_shape=True,
+                            import_scene_as_collection=False,
                         )
                     )
                 except RuntimeError:
