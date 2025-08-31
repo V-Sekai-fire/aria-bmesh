@@ -2725,93 +2725,6 @@ class Vrm0Exporter(AbstractBaseVrmExporter):
             if loops
         ]
 
-    def mesh_to_bin_and_dict(
-        self,
-        obj: Object,
-        mesh_dicts: list[dict[str, Json]],
-        extensions_used: list[str],
-        json_dict: dict[str, Json],
-        buffer0: bytearray,
-    ) -> None:
-        """Add EXT_bmesh_encoding extension data to mesh using buffer format."""
-        if not self.export_ext_bmesh_encoding:
-            return
-            
-        try:
-            # Create BMesh from object for extension data
-            bmesh_encoder = BmeshEncoder()
-            bm = bmesh_encoder.create_bmesh_from_mesh(obj)
-            if not bm:
-                logger.warning(f"Could not create BMesh for object {obj.name}")
-                return
-                
-            # Generate EXT_bmesh_encoding extension data
-            raw_extension_data = bmesh_encoder.encode_bmesh_to_gltf_extension(bm)
-            if not raw_extension_data:
-                logger.warning(f"No EXT_bmesh_encoding data generated for {obj.name}")
-                bm.free()
-                return
-            
-            logger.info(f"Generated EXT_bmesh_encoding data for {obj.name}: {list(raw_extension_data.keys())}")
-            
-            # Create buffer views and get final extension data
-            extension_data = bmesh_encoder.create_buffer_views(json_dict, buffer0, raw_extension_data)
-            
-            if not extension_data:
-                logger.warning(f"No buffer views created for EXT_bmesh_encoding data in {obj.name}")
-                bm.free()
-                return
-            
-            logger.info(f"Created buffer views for EXT_bmesh_encoding in {obj.name}: {list(extension_data.keys())}")
-            
-            # Find the mesh dict and add extension to its primitive
-            mesh_name = obj.data.name if obj.data else obj.name
-            mesh_dict = None
-            
-            # Find the most recently added mesh (should be this one)
-            for mesh in reversed(mesh_dicts):
-                if mesh.get("name") == mesh_name:
-                    mesh_dict = mesh
-                    break
-            
-            if not mesh_dict:
-                logger.warning(f"Could not find mesh dict for {mesh_name}")
-                bm.free()
-                return
-            
-            if "primitives" not in mesh_dict:
-                logger.warning(f"No primitives in mesh dict for {mesh_name}")
-                bm.free()
-                return
-                
-            primitives = mesh_dict["primitives"]
-            if not isinstance(primitives, list) or not primitives:
-                logger.warning(f"Invalid primitives structure for {mesh_name}")
-                bm.free()
-                return
-                
-            # Add extension to first primitive
-            primitive = primitives[0]
-            if not isinstance(primitive, dict):
-                logger.warning(f"Invalid primitive structure for {mesh_name}")
-                bm.free()
-                return
-                
-            if "extensions" not in primitive:
-                primitive["extensions"] = {}
-            primitive["extensions"]["EXT_bmesh_encoding"] = extension_data
-            
-            # Add to extensions used
-            if "EXT_bmesh_encoding" not in extensions_used:
-                extensions_used.append("EXT_bmesh_encoding")
-                
-            logger.info(f"Successfully added EXT_bmesh_encoding to mesh {mesh_name}")
-            bm.free()
-            
-        except Exception as e:
-            logger.error(f"Failed to add EXT_bmesh_encoding to mesh {obj.name}: {e}")
-            import traceback
-            traceback.print_exc()
 
     def write_mesh_node(
         self,
@@ -3355,17 +3268,33 @@ class Vrm0Exporter(AbstractBaseVrmExporter):
                     "targetNames": [target.name for target in primitive_targets]
                 }
 
+        # Add EXT_bmesh_encoding extension data BEFORE creating final mesh dict
+        if self.export_ext_bmesh_encoding:
+            try:
+                bmesh_encoder = BmeshEncoder()
+                bm = bmesh_encoder.create_bmesh_from_mesh(obj)
+                if bm:
+                    raw_extension_data = bmesh_encoder.encode_bmesh_to_gltf_extension(bm)
+                    if raw_extension_data:
+                        full_json_dict = {"bufferViews": buffer_view_dicts, "accessors": accessor_dicts}
+                        extension_data = bmesh_encoder.create_buffer_views(full_json_dict, buffer0, raw_extension_data)
+                        if extension_data and primitive_dicts:
+                            primitive = primitive_dicts[0]
+                            if "extensions" not in primitive:
+                                primitive["extensions"] = {}
+                            primitive["extensions"]["EXT_bmesh_encoding"] = extension_data
+                            if "EXT_bmesh_encoding" not in extensions_used:
+                                extensions_used.append("EXT_bmesh_encoding")
+                            logger.info(f"Added EXT_bmesh_encoding to {obj.name}")
+                    bm.free()
+            except Exception as e:
+                logger.error(f"Failed to add EXT_bmesh_encoding to {obj.name}: {e}")
+
         mesh_dict = {
             "name": original_mesh_convertible.name,
             "primitives": make_json(primitive_dicts),
         }
         mesh_dicts.append(mesh_dict)
-        
-        # Add EXT_bmesh_encoding extension data to mesh if enabled
-        if self.export_ext_bmesh_encoding:
-            # Pass json_dict and buffer0 for proper buffer view creation
-            json_dict = {"meshes": mesh_dicts}  # Create minimal json_dict for buffer operations
-            self.mesh_to_bin_and_dict(obj, mesh_dicts, extensions_used, json_dict, buffer0)
         
         mesh_object_name_to_mesh_index[obj.name] = mesh_index
         if skin_dict and have_skin:
