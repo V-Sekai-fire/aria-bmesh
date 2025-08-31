@@ -208,7 +208,7 @@ class BmeshEncoder:
             "count": vertex_count,
             "positions": {
                 "data": positions_buffer,
-                "target": "ARRAY_BUFFER",
+                "target": 34962,  # GL_ARRAY_BUFFER
                 "componentType": 5126,  # GL_FLOAT
                 "type": "VEC3",
                 "count": vertex_count
@@ -219,7 +219,7 @@ class BmeshEncoder:
         if edges_buffer:
             result["edges"] = {
                 "data": edges_buffer,
-                "target": "ARRAY_BUFFER",
+                "target": 34962,  # GL_ARRAY_BUFFER
                 "componentType": 5125,  # GL_UNSIGNED_INT
                 "type": "SCALAR"
             }
@@ -272,7 +272,7 @@ class BmeshEncoder:
             "count": edge_count,
             "vertices": {
                 "data": vertices_buffer,
-                "target": "ELEMENT_ARRAY_BUFFER",
+                "target": 34963,  # GL_ELEMENT_ARRAY_BUFFER
                 "componentType": 5125,  # GL_UNSIGNED_INT
                 "type": "VEC2",
                 "count": edge_count
@@ -283,7 +283,7 @@ class BmeshEncoder:
         if faces_buffer:
             result["faces"] = {
                 "data": faces_buffer,
-                "target": "ARRAY_BUFFER",
+                "target": 34962,  # GL_ARRAY_BUFFER
                 "componentType": 5125,  # GL_UNSIGNED_INT
                 "type": "SCALAR"
             }
@@ -292,7 +292,7 @@ class BmeshEncoder:
         if manifold_buffer:
             result["manifold"] = {
                 "data": manifold_buffer,
-                "target": "ARRAY_BUFFER",
+                "target": 34962,  # GL_ARRAY_BUFFER
                 "componentType": 5121,  # GL_UNSIGNED_BYTE
                 "type": "SCALAR",
                 "count": edge_count
@@ -376,7 +376,7 @@ class BmeshEncoder:
             "count": loop_count,
             "topology": {
                 "data": topology_buffer,
-                "target": "ARRAY_BUFFER",
+                "target": 34962,  # GL_ARRAY_BUFFER
                 "componentType": 5125,  # GL_UNSIGNED_INT
                 "type": "SCALAR",  # 7 components per loop stored as scalars
                 "count": loop_count * 7  # 7 values per loop
@@ -389,7 +389,7 @@ class BmeshEncoder:
             for attr_name, uv_buffer in uv_buffers.items():
                 result["attributes"][attr_name] = {
                     "data": uv_buffer,
-                    "target": "ARRAY_BUFFER",
+                    "target": 34962,  # GL_ARRAY_BUFFER
                     "componentType": 5126,  # GL_FLOAT
                     "type": "VEC2",
                     "count": loop_count
@@ -456,13 +456,13 @@ class BmeshEncoder:
             "count": face_count,
             "vertices": {
                 "data": vertices_buffer,
-                "target": "ARRAY_BUFFER",
+                "target": 34962,  # GL_ARRAY_BUFFER
                 "componentType": 5125,  # GL_UNSIGNED_INT
                 "type": "SCALAR"
             },
             "offsets": {
                 "data": offsets_buffer,
-                "target": "ARRAY_BUFFER",
+                "target": 34962,  # GL_ARRAY_BUFFER
                 "componentType": 5125,  # GL_UNSIGNED_INT
                 "type": "SCALAR",
                 "count": face_count + 1
@@ -473,7 +473,7 @@ class BmeshEncoder:
         if edges_buffer:
             result["edges"] = {
                 "data": edges_buffer,
-                "target": "ARRAY_BUFFER",
+                "target": 34962,  # GL_ARRAY_BUFFER
                 "componentType": 5125,  # GL_UNSIGNED_INT
                 "type": "SCALAR"
             }
@@ -481,7 +481,7 @@ class BmeshEncoder:
         if loops_buffer:
             result["loops"] = {
                 "data": loops_buffer,
-                "target": "ARRAY_BUFFER",
+                "target": 34962,  # GL_ARRAY_BUFFER
                 "componentType": 5125,  # GL_UNSIGNED_INT
                 "type": "SCALAR"
             }
@@ -489,7 +489,7 @@ class BmeshEncoder:
         if normals_buffer:
             result["normals"] = {
                 "data": normals_buffer,
-                "target": "ARRAY_BUFFER",
+                "target": 34962,  # GL_ARRAY_BUFFER
                 "componentType": 5126,  # GL_FLOAT
                 "type": "VEC3",
                 "count": face_count
@@ -563,7 +563,7 @@ class BmeshEncoder:
             "count": vertex_count,
             "positions": {
                 "data": positions_buffer,
-                "target": "ARRAY_BUFFER",
+                "target": 34962,  # GL_ARRAY_BUFFER
                 "componentType": 5126,  # GL_FLOAT
                 "type": "VEC3",
                 "count": vertex_count
@@ -574,7 +574,7 @@ class BmeshEncoder:
         if edges_buffer:
             result["edges"] = {
                 "data": edges_buffer,
-                "target": "ARRAY_BUFFER",
+                "target": 34962,  # GL_ARRAY_BUFFER
                 "componentType": 5125,  # GL_UNSIGNED_INT
                 "type": "SCALAR"
             }
@@ -624,7 +624,7 @@ class BmeshEncoder:
             "count": edge_count,
             "vertices": {
                 "data": vertices_buffer,
-                "target": "ELEMENT_ARRAY_BUFFER",
+                "target": 34963,  # GL_ELEMENT_ARRAY_BUFFER
                 "componentType": 5125,  # GL_UNSIGNED_INT
                 "type": "VEC2",
                 "count": edge_count
@@ -635,7 +635,7 @@ class BmeshEncoder:
         if faces_buffer:
             result["faces"] = {
                 "data": faces_buffer,
-                "target": "ARRAY_BUFFER",
+                "target": 34962,  # GL_ARRAY_BUFFER
                 "componentType": 5125,  # GL_UNSIGNED_INT
                 "type": "SCALAR"
             }
@@ -644,7 +644,7 @@ class BmeshEncoder:
         if manifold_buffer:
             result["manifold"] = {
                 "data": manifold_buffer,
-                "target": "ARRAY_BUFFER",
+                "target": 34962,  # GL_ARRAY_BUFFER
                 "componentType": 5121,  # GL_UNSIGNED_BYTE
                 "type": "SCALAR",
                 "count": edge_count
@@ -723,7 +723,7 @@ class BmeshEncoder:
             "count": loop_count,
             "topology": {
                 "data": topology_buffer,
-                "target": "ARRAY_BUFFER",
+                "target": 34962,  # GL_ARRAY_BUFFER
                 "componentType": 5125,  # GL_UNSIGNED_INT
                 "type": "SCALAR",  # 7 components per loop stored as scalars
                 "count": loop_count * 7  # 7 values per loop
@@ -736,7 +736,7 @@ class BmeshEncoder:
             for attr_name, uv_buffer in uv_buffers.items():
                 result["attributes"][attr_name] = {
                     "data": uv_buffer,
-                    "target": "ARRAY_BUFFER",
+                    "target": 34962,  # GL_ARRAY_BUFFER
                     "componentType": 5126,  # GL_FLOAT
                     "type": "VEC2",
                     "count": loop_count
@@ -799,13 +799,13 @@ class BmeshEncoder:
             "count": face_count,
             "vertices": {
                 "data": vertices_buffer,
-                "target": "ARRAY_BUFFER",
+                "target": 34962,  # GL_ARRAY_BUFFER
                 "componentType": 5125,  # GL_UNSIGNED_INT
                 "type": "SCALAR"
             },
             "offsets": {
                 "data": offsets_buffer,
-                "target": "ARRAY_BUFFER",
+                "target": 34962,  # GL_ARRAY_BUFFER
                 "componentType": 5125,  # GL_UNSIGNED_INT
                 "type": "SCALAR",
                 "count": face_count + 1
@@ -816,7 +816,7 @@ class BmeshEncoder:
         if edges_buffer:
             result["edges"] = {
                 "data": edges_buffer,
-                "target": "ARRAY_BUFFER",
+                "target": 34962,  # GL_ARRAY_BUFFER
                 "componentType": 5125,  # GL_UNSIGNED_INT
                 "type": "SCALAR"
             }
@@ -824,7 +824,7 @@ class BmeshEncoder:
         if loops_buffer:
             result["loops"] = {
                 "data": loops_buffer,
-                "target": "ARRAY_BUFFER",
+                "target": 34962,  # GL_ARRAY_BUFFER
                 "componentType": 5125,  # GL_UNSIGNED_INT
                 "type": "SCALAR"
             }
@@ -832,7 +832,7 @@ class BmeshEncoder:
         if normals_buffer:
             result["normals"] = {
                 "data": normals_buffer,
-                "target": "ARRAY_BUFFER",
+                "target": 34962,  # GL_ARRAY_BUFFER
                 "componentType": 5126,  # GL_FLOAT
                 "type": "VEC3",
                 "count": face_count
@@ -1246,7 +1246,7 @@ class BmeshEncoder:
             "count": vertex_count,
             "positions": {
                 "data": positions_buffer,
-                "target": "ARRAY_BUFFER",
+                "target": 34962,  # GL_ARRAY_BUFFER
                 "componentType": 5126,  # GL_FLOAT
                 "type": "VEC3",
                 "count": vertex_count
@@ -1257,7 +1257,7 @@ class BmeshEncoder:
         if edges_buffer:
             result["edges"] = {
                 "data": edges_buffer,
-                "target": "ARRAY_BUFFER",
+                "target": 34962,  # GL_ARRAY_BUFFER
                 "componentType": 5125,  # GL_UNSIGNED_INT
                 "type": "SCALAR"
             }
@@ -1317,7 +1317,7 @@ class BmeshEncoder:
             "count": edge_count,
             "vertices": {
                 "data": vertices_buffer,
-                "target": "ELEMENT_ARRAY_BUFFER",
+                "target": 34963,  # GL_ELEMENT_ARRAY_BUFFER
                 "componentType": 5125,  # GL_UNSIGNED_INT
                 "type": "VEC2",
                 "count": edge_count
@@ -1328,7 +1328,7 @@ class BmeshEncoder:
         if faces_buffer:
             result["faces"] = {
                 "data": faces_buffer,
-                "target": "ARRAY_BUFFER",
+                "target": 34962,  # GL_ARRAY_BUFFER
                 "componentType": 5125,  # GL_UNSIGNED_INT
                 "type": "SCALAR"
             }
@@ -1337,7 +1337,7 @@ class BmeshEncoder:
         if manifold_buffer:
             result["manifold"] = {
                 "data": manifold_buffer,
-                "target": "ARRAY_BUFFER",
+                "target": 34962,  # GL_ARRAY_BUFFER
                 "componentType": 5121,  # GL_UNSIGNED_BYTE
                 "type": "SCALAR",
                 "count": edge_count
@@ -1414,7 +1414,7 @@ class BmeshEncoder:
             "count": loop_count,
             "topology": {
                 "data": topology_buffer,
-                "target": "ARRAY_BUFFER",
+                "target": 34962,  # GL_ARRAY_BUFFER
                 "componentType": 5125,  # GL_UNSIGNED_INT
                 "type": "SCALAR",  # 7 components per loop stored as scalars
                 "count": loop_count * 7  # 7 values per loop
@@ -1427,7 +1427,7 @@ class BmeshEncoder:
             for attr_name, uv_buffer in uv_buffers.items():
                 result["attributes"][attr_name] = {
                     "data": uv_buffer,
-                    "target": "ARRAY_BUFFER",
+                    "target": 34962,  # GL_ARRAY_BUFFER
                     "componentType": 5126,  # GL_FLOAT
                     "type": "VEC2",
                     "count": loop_count
@@ -1489,13 +1489,13 @@ class BmeshEncoder:
             "count": face_count,
             "vertices": {
                 "data": vertices_buffer,
-                "target": "ARRAY_BUFFER",
+                "target": 34962,  # GL_ARRAY_BUFFER
                 "componentType": 5125,  # GL_UNSIGNED_INT
                 "type": "SCALAR"
             },
             "offsets": {
                 "data": offsets_buffer,
-                "target": "ARRAY_BUFFER",
+                "target": 34962,  # GL_ARRAY_BUFFER
                 "componentType": 5125,  # GL_UNSIGNED_INT
                 "type": "SCALAR",
                 "count": face_count + 1
@@ -1506,7 +1506,7 @@ class BmeshEncoder:
         if edges_buffer:
             result["edges"] = {
                 "data": edges_buffer,
-                "target": "ARRAY_BUFFER",
+                "target": 34962,  # GL_ARRAY_BUFFER
                 "componentType": 5125,  # GL_UNSIGNED_INT
                 "type": "SCALAR"
             }
@@ -1514,7 +1514,7 @@ class BmeshEncoder:
         if loops_buffer:
             result["loops"] = {
                 "data": loops_buffer,
-                "target": "ARRAY_BUFFER",
+                "target": 34962,  # GL_ARRAY_BUFFER
                 "componentType": 5125,  # GL_UNSIGNED_INT
                 "type": "SCALAR"
             }
@@ -1522,7 +1522,7 @@ class BmeshEncoder:
         if normals_buffer:
             result["normals"] = {
                 "data": normals_buffer,
-                "target": "ARRAY_BUFFER",
+                "target": 34962,  # GL_ARRAY_BUFFER
                 "componentType": 5126,  # GL_FLOAT
                 "type": "VEC3",
                 "count": face_count
