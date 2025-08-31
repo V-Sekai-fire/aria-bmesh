@@ -2742,46 +2742,76 @@ class Vrm0Exporter(AbstractBaseVrmExporter):
             bmesh_encoder = BmeshEncoder()
             bm = bmesh_encoder.create_bmesh_from_mesh(obj)
             if not bm:
+                logger.warning(f"Could not create BMesh for object {obj.name}")
                 return
                 
             # Generate EXT_bmesh_encoding extension data
             raw_extension_data = bmesh_encoder.encode_bmesh_to_gltf_extension(bm)
             if not raw_extension_data:
+                logger.warning(f"No EXT_bmesh_encoding data generated for {obj.name}")
                 bm.free()
                 return
+            
+            logger.info(f"Generated EXT_bmesh_encoding data for {obj.name}: {list(raw_extension_data.keys())}")
             
             # Create buffer views and get final extension data
             extension_data = bmesh_encoder.create_buffer_views(json_dict, buffer0, raw_extension_data)
             
             if not extension_data:
+                logger.warning(f"No buffer views created for EXT_bmesh_encoding data in {obj.name}")
                 bm.free()
                 return
             
-            # Add extension to mesh dict
+            logger.info(f"Created buffer views for EXT_bmesh_encoding in {obj.name}: {list(extension_data.keys())}")
+            
+            # Find the mesh dict and add extension to its primitive
             mesh_name = obj.data.name if obj.data else obj.name
-            mesh_dict = next(
-                (mesh for mesh in mesh_dicts if mesh.get("name") == mesh_name), 
-                None
-            )
+            mesh_dict = None
             
-            if mesh_dict and "primitives" in mesh_dict:
-                primitives = mesh_dict["primitives"]
-                if isinstance(primitives, list) and primitives:
-                    # Add extension to first primitive
-                    primitive = primitives[0]
-                    if isinstance(primitive, dict):
-                        if "extensions" not in primitive:
-                            primitive["extensions"] = {}
-                        primitive["extensions"]["EXT_bmesh_encoding"] = extension_data
-                        
-                        # Add to extensions used
-                        if "EXT_bmesh_encoding" not in extensions_used:
-                            extensions_used.append("EXT_bmesh_encoding")
+            # Find the most recently added mesh (should be this one)
+            for mesh in reversed(mesh_dicts):
+                if mesh.get("name") == mesh_name:
+                    mesh_dict = mesh
+                    break
             
+            if not mesh_dict:
+                logger.warning(f"Could not find mesh dict for {mesh_name}")
+                bm.free()
+                return
+            
+            if "primitives" not in mesh_dict:
+                logger.warning(f"No primitives in mesh dict for {mesh_name}")
+                bm.free()
+                return
+                
+            primitives = mesh_dict["primitives"]
+            if not isinstance(primitives, list) or not primitives:
+                logger.warning(f"Invalid primitives structure for {mesh_name}")
+                bm.free()
+                return
+                
+            # Add extension to first primitive
+            primitive = primitives[0]
+            if not isinstance(primitive, dict):
+                logger.warning(f"Invalid primitive structure for {mesh_name}")
+                bm.free()
+                return
+                
+            if "extensions" not in primitive:
+                primitive["extensions"] = {}
+            primitive["extensions"]["EXT_bmesh_encoding"] = extension_data
+            
+            # Add to extensions used
+            if "EXT_bmesh_encoding" not in extensions_used:
+                extensions_used.append("EXT_bmesh_encoding")
+                
+            logger.info(f"Successfully added EXT_bmesh_encoding to mesh {mesh_name}")
             bm.free()
             
         except Exception as e:
             logger.error(f"Failed to add EXT_bmesh_encoding to mesh {obj.name}: {e}")
+            import traceback
+            traceback.print_exc()
 
     def write_mesh_node(
         self,
