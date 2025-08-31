@@ -42,11 +42,14 @@ class BmeshDecoder:
     def __init__(self):
         pass
 
-    def decode_gltf_extension_to_bmesh(self, extension_data: Dict[str, Any]) -> Optional[BMesh]:
+    def decode_gltf_extension_to_bmesh(self, extension_data: Dict[str, Any], parse_result: Any) -> Optional[BMesh]:
         """
         Decode EXT_bmesh_encoding extension data to BMesh.
         
         Only supports buffer-based reconstruction as per updated specification.
+        Args:
+            extension_data: The EXT_bmesh_encoding extension data from glTF primitive
+            parse_result: The VRM addon's ParseResult containing glTF data and buffers
         """
         if not extension_data:
             return None
@@ -54,7 +57,7 @@ class BmeshDecoder:
         try:
             # Check if we have explicit BMesh topology data
             if self._has_explicit_topology_data(extension_data):
-                return self._reconstruct_from_buffer_format(extension_data)
+                return self._reconstruct_from_buffer_format(extension_data, parse_result)
             else:
                 # Fallback to standard glTF import
                 logger.info("EXT_bmesh_encoding: No topology data found, using fallback")
@@ -69,7 +72,7 @@ class BmeshDecoder:
         required_keys = ["vertices", "edges", "loops", "faces"]
         return all(key in extension_data for key in required_keys)
 
-    def _reconstruct_from_buffer_format(self, extension_data: Dict[str, Any]) -> Optional[BMesh]:
+    def _reconstruct_from_buffer_format(self, extension_data: Dict[str, Any], parse_result: Any) -> Optional[BMesh]:
         """Reconstruct BMesh from buffer format data."""
         bm = bmesh.new()
         
@@ -85,10 +88,9 @@ class BmeshDecoder:
                 bm.free()
                 return None
 
-            # Get the glTF context to read buffer views
-            gltf_data = getattr(bpy.context, '_gltf_import_data', None)
-            if not gltf_data:
-                logger.error("No glTF import data available for buffer reconstruction")
+            # Use the VRM addon's parse_result instead of Blender glTF context
+            if not parse_result:
+                logger.error("No VRM parse result available for buffer reconstruction")
                 bm.free()
                 return None
 
@@ -96,7 +98,7 @@ class BmeshDecoder:
             vertex_map = {}
             if vertex_data and vertex_data.get("count", 0) > 0:
                 vertex_map = self._reconstruct_vertices_from_buffers(
-                    bm, vertex_data, gltf_data
+                    bm, vertex_data, parse_result
                 )
 
             if not vertex_map:
@@ -108,20 +110,20 @@ class BmeshDecoder:
             edge_map = {}
             if edge_data and edge_data.get("count", 0) > 0:
                 edge_map = self._reconstruct_edges_from_buffers(
-                    bm, edge_data, vertex_map, gltf_data
+                    bm, edge_data, vertex_map, parse_result
                 )
 
             # Reconstruct faces (needed before loops for face references)
             face_map = {}
             if face_data and face_data.get("count", 0) > 0:
                 face_map = self._reconstruct_faces_from_buffers(
-                    bm, face_data, vertex_map, edge_map, gltf_data
+                    bm, face_data, vertex_map, edge_map, parse_result
                 )
 
             # Apply loop data (UV coordinates, etc.)
             if loop_data and loop_data.get("count", 0) > 0:
                 self._apply_loop_data_from_buffers(
-                    bm, loop_data, vertex_map, edge_map, face_map, gltf_data
+                    bm, loop_data, vertex_map, edge_map, face_map, parse_result
                 )
 
             # Ensure all lookup tables are valid
@@ -200,30 +202,42 @@ class BmeshDecoder:
         extensions = primitive_data.get("extensions", {})
         return extensions.get("EXT_bmesh_encoding")
 
-    def _read_buffer_view(self, gltf_data: Any, buffer_view_index: int, component_type: int, count: int, type_name: str) -> Optional[Any]:
-        """Read data from a glTF buffer view."""
+    def _read_buffer_view(self, parse_result: Any, buffer_view_index: int, component_type: int, count: int, type_name: str) -> Optional[Any]:
+        """Read data from a glTF buffer view using VRM addon's parse_result."""
         try:
-            buffer_views = getattr(gltf_data, 'buffer_views', None) or getattr(gltf_data, 'bufferViews', [])
+            # Access buffer views from VRM addon's parsed JSON data
+            json_dict = parse_result.json_dict
+            buffer_views = json_dict.get('bufferViews', [])
+            
             if not buffer_views or buffer_view_index >= len(buffer_views):
+                logger.warning(f"Buffer view {buffer_view_index} not found in {len(buffer_views)} buffer views")
                 return None
                 
             buffer_view = buffer_views[buffer_view_index]
-            buffers = getattr(gltf_data, 'buffers', [])
             
-            if not buffers or buffer_view.get('buffer', 0) >= len(buffers):
+            # Access buffer data from parse_result
+            buffer_index = buffer_view.get('buffer', 0)
+            if buffer_index != 0:
+                logger.warning(f"EXT_bmesh_encoding only supports buffer 0, got buffer {buffer_index}")
                 return None
                 
-            buffer_data = buffers[buffer_view.get('buffer', 0)]
+            # Get buffer data from parse_result - this is typically buffer0_bytes
+            if hasattr(parse_result, 'buffer0_bytes'):
+                buffer_data = parse_result.buffer0_bytes
+            elif hasattr(parse_result, 'buffer_data'):
+                buffer_data = parse_result.buffer_data
+            else:
+                logger.error("No buffer data found in parse_result")
+                return None
+            
             byte_offset = buffer_view.get('byteOffset', 0)
             byte_length = buffer_view.get('byteLength', 0)
             
-            if isinstance(buffer_data, bytes):
-                data = buffer_data[byte_offset:byte_offset + byte_length]
-            elif hasattr(buffer_data, 'data'):
-                data = buffer_data.data[byte_offset:byte_offset + byte_length]
-            else:
-                logger.warning(f"Unsupported buffer data type: {type(buffer_data)}")
+            if byte_offset + byte_length > len(buffer_data):
+                logger.error(f"Buffer view {buffer_view_index} extends beyond buffer bounds")
                 return None
+                
+            data = buffer_data[byte_offset:byte_offset + byte_length]
 
             # Parse based on component type and format
             if component_type == 5126:  # GL_FLOAT
@@ -245,7 +259,7 @@ class BmeshDecoder:
             logger.error(f"Failed to read buffer view {buffer_view_index}: {e}")
             return None
 
-    def _reconstruct_vertices_from_buffers(self, bm: BMesh, vertex_data: Dict[str, Any], gltf_data: Any) -> Dict[int, BMVert]:
+    def _reconstruct_vertices_from_buffers(self, bm: BMesh, vertex_data: Dict[str, Any], parse_result: Any) -> Dict[int, BMVert]:
         """Reconstruct vertices from buffer data."""
         vertex_map = {}
         vertex_count = vertex_data.get("count", 0)
@@ -258,7 +272,7 @@ class BmeshDecoder:
         if positions_buffer_index is None:
             return vertex_map
 
-        positions = self._read_buffer_view(gltf_data, positions_buffer_index, 5126, vertex_count, "VEC3")
+        positions = self._read_buffer_view(parse_result, positions_buffer_index, 5126, vertex_count, "VEC3")
         if not positions:
             return vertex_map
 
@@ -271,7 +285,7 @@ class BmeshDecoder:
 
         return vertex_map
 
-    def _reconstruct_edges_from_buffers(self, bm: BMesh, edge_data: Dict[str, Any], vertex_map: Dict[int, BMVert], gltf_data: Any) -> Dict[int, BMEdge]:
+    def _reconstruct_edges_from_buffers(self, bm: BMesh, edge_data: Dict[str, Any], vertex_map: Dict[int, BMVert], parse_result: Any) -> Dict[int, BMEdge]:
         """Reconstruct edges from buffer data."""
         edge_map = {}
         edge_count = edge_data.get("count", 0)
@@ -284,7 +298,7 @@ class BmeshDecoder:
         if vertices_buffer_index is None:
             return edge_map
 
-        edge_vertices = self._read_buffer_view(gltf_data, vertices_buffer_index, 5125, edge_count * 2, "VEC2")
+        edge_vertices = self._read_buffer_view(parse_result, vertices_buffer_index, 5125, edge_count * 2, "VEC2")
         if not edge_vertices:
             return edge_map
 
@@ -309,7 +323,7 @@ class BmeshDecoder:
 
         return edge_map
 
-    def _reconstruct_faces_from_buffers(self, bm: BMesh, face_data: Dict[str, Any], vertex_map: Dict[int, BMVert], edge_map: Dict[int, BMEdge], gltf_data: Any) -> Dict[int, BMFace]:
+    def _reconstruct_faces_from_buffers(self, bm: BMesh, face_data: Dict[str, Any], vertex_map: Dict[int, BMVert], edge_map: Dict[int, BMEdge], parse_result: Any) -> Dict[int, BMFace]:
         """Reconstruct faces from buffer data."""
         face_map = {}
         face_count = face_data.get("count", 0)
@@ -325,21 +339,21 @@ class BmeshDecoder:
             return face_map
 
         # Read offsets to know how to parse variable-length arrays
-        offsets = self._read_buffer_view(gltf_data, offsets_buffer_index, 5125, (face_count + 1) * 3, "VEC3")
+        offsets = self._read_buffer_view(parse_result, offsets_buffer_index, 5125, face_count + 1, "SCALAR")
         if not offsets:
             return face_map
 
         # Calculate total vertex indices needed
-        max_vertex_offset = offsets[(face_count) * 3]  # Final offset
-        face_vertices_data = self._read_buffer_view(gltf_data, vertices_buffer_index, 5125, max_vertex_offset, "SCALAR")
+        max_vertex_offset = offsets[face_count]  # Final offset
+        face_vertices_data = self._read_buffer_view(parse_result, vertices_buffer_index, 5125, max_vertex_offset, "SCALAR")
         
         if not face_vertices_data:
             return face_map
 
         # Create faces
         for i in range(face_count):
-            vertex_start = offsets[i * 3]
-            vertex_end = offsets[(i + 1) * 3] if i + 1 < face_count else offsets[face_count * 3]
+            vertex_start = offsets[i]
+            vertex_end = offsets[i + 1] if i + 1 < len(offsets) else max_vertex_offset
             
             # Get vertex indices for this face
             face_vertex_indices = face_vertices_data[vertex_start:vertex_end]
@@ -360,7 +374,7 @@ class BmeshDecoder:
 
         return face_map
 
-    def _apply_loop_data_from_buffers(self, bm: BMesh, loop_data: Dict[str, Any], vertex_map: Dict[int, BMVert], edge_map: Dict[int, BMEdge], face_map: Dict[int, BMFace], gltf_data: Any) -> None:
+    def _apply_loop_data_from_buffers(self, bm: BMesh, loop_data: Dict[str, Any], vertex_map: Dict[int, BMVert], edge_map: Dict[int, BMEdge], face_map: Dict[int, BMFace], parse_result: Any) -> None:
         """Apply loop data (UV coordinates, etc.) from buffer data."""
         loop_count = loop_data.get("count", 0)
         if loop_count == 0:
@@ -372,7 +386,7 @@ class BmeshDecoder:
         
         for attr_name, buffer_index in attributes.items():
             if attr_name.startswith("TEXCOORD_"):
-                uv_coords = self._read_buffer_view(gltf_data, buffer_index, 5126, loop_count, "VEC2")
+                uv_coords = self._read_buffer_view(parse_result, buffer_index, 5126, loop_count, "VEC2")
                 if uv_coords:
                     uv_data[attr_name] = uv_coords
 

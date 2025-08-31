@@ -435,8 +435,8 @@ class Vrm1Importer(AbstractBaseVrmImporter):
                     logger.warning(f"Could not find mesh object for mesh {mesh_index}")
                     continue
                     
-                # Decode BMesh topology
-                reconstructed_bmesh = decoder.decode_gltf_extension_to_bmesh(extension_data)
+                # Decode BMesh topology - pass parse_result for buffer access
+                reconstructed_bmesh = decoder.decode_gltf_extension_to_bmesh(extension_data, self.parse_result)
                 if not reconstructed_bmesh:
                     logger.warning(f"Failed to decode EXT_bmesh_encoding for mesh {mesh_index}")
                     continue
