@@ -43,6 +43,54 @@ class BmeshEncoder:
         """Initialize encoder with buffer-only format."""
         self.preserve_manifold_info = True
 
+    def encode_object(self, mesh_obj: bpy.types.Object) -> Dict[str, Any]:
+        """
+        Creates a BMesh from the given object, encodes it for the
+        EXT_bmesh_encoding extension, and ensures proper cleanup.
+
+        This is the recommended entry point to avoid caching issues.
+        """
+        logger.info(f"Creating BMesh for '{mesh_obj.name}' for EXT_bmesh_encoding.")
+        
+        # Use the existing static method to create the BMesh
+        bm = BmeshEncoder.create_bmesh_from_mesh(mesh_obj)
+        
+        if not bm:
+            logger.warning(f"Could not create BMesh from '{mesh_obj.name}', skipping extension.")
+            return {}
+
+        try:
+            # Delegate to the main encoding logic that you've already written
+            extension_data = self.encode_bmesh_to_gltf_extension(bm)
+            if not extension_data:
+                logger.warning(f"BMesh encoding resulted in no data for '{mesh_obj.name}'.")
+            return extension_data
+        finally:
+            # IMPORTANT: Always free the BMesh to prevent memory leaks
+            if bm:
+                bm.free()
+                logger.debug(f"BMesh for '{mesh_obj.name}' has been freed.")
+
+    def encode_object_native(self, mesh_obj: bpy.types.Object) -> Dict[str, Any]:
+        """
+        Creates native mesh data from the given object and encodes it using
+        the stable native API. This is the recommended approach.
+        """
+        logger.info(f"Creating native mesh data for '{mesh_obj.name}' for EXT_bmesh_encoding.")
+        
+        # Use the static method to get evaluated mesh data
+        mesh_data = BmeshEncoder.create_mesh_data_from_object(mesh_obj)
+
+        if not mesh_data:
+            logger.warning(f"Could not get mesh data from '{mesh_obj.name}', skipping extension.")
+            return {}
+        
+        # Delegate to the native encoding logic
+        extension_data = self.encode_mesh_to_gltf_extension_native(mesh_data)
+
+        # No need to free mesh_data like a BMesh, Blender manages it
+        return extension_data
+
     def encode_bmesh_to_gltf_extension(self, bm: BMesh) -> Dict[str, Any]:
         """
         Encode BMesh to EXT_bmesh_encoding extension data using buffer format.
@@ -254,8 +302,8 @@ class BmeshEncoder:
 
     def _encode_loops_to_buffers_direct(self, bm: BMesh, vert_to_index: Dict, edge_to_index: Dict, face_to_index: Dict, loop_to_index: Dict) -> Dict[str, Any]:
         """Encode loop data using manual index maps to avoid lookup table issues."""
-        if not bm.loops:
-            return {}
+        if not any(f.loops for f in bm.faces):
+             return {}
 
         # Count total loops using provided mapping
         loop_count = len(loop_to_index)
@@ -358,7 +406,7 @@ class BmeshEncoder:
         
         # Create variable-length arrays for face data
         vertices_buffer = bytearray()
-        edges_buffer = bytearray() 
+        edges_buffer = bytearray()  
         loops_buffer = bytearray()
         normals_buffer = bytearray()
         offsets_buffer = bytearray()
@@ -450,8 +498,8 @@ class BmeshEncoder:
         return result
 
     def _find_radial_loop_indices_direct(
-        self, 
-        loop: BMLoop, 
+        self,  
+        loop: BMLoop,  
         current_loop_index: int,
         loop_to_index: Dict,
         face_to_index: Dict
@@ -555,7 +603,7 @@ class BmeshEncoder:
         for edge in bm.edges:
             # Pack edge vertices (required by schema)
             vertices_buffer.extend(vertex_pair_struct.pack(
-                edge.verts[0].index, 
+                edge.verts[0].index,  
                 edge.verts[1].index
             ))
             
@@ -606,8 +654,8 @@ class BmeshEncoder:
 
     def _encode_loops_to_buffers(self, bm: BMesh) -> Dict[str, Any]:
         """Encode loop data for buffer format with glTF-compliant UV handling."""
-        if not bm.loops:
-            return {}
+        if not any(f.loops for f in bm.faces):
+             return {}
 
         # Count total loops
         loop_count = sum(len(face.loops) for face in bm.faces)
@@ -705,7 +753,7 @@ class BmeshEncoder:
         
         # Create variable-length arrays for face data
         vertices_buffer = bytearray()
-        edges_buffer = bytearray() 
+        edges_buffer = bytearray()  
         loops_buffer = bytearray()
         normals_buffer = bytearray()
         offsets_buffer = bytearray()
@@ -807,8 +855,8 @@ class BmeshEncoder:
         return len(linked_faces) == 2
 
     def _find_radial_loop_indices(
-        self, 
-        loop: BMLoop, 
+        self,  
+        loop: BMLoop,  
         current_loop_index: int,
         loop_index_map: Dict[Tuple[int, int], int]
     ) -> Tuple[int, int]:
@@ -906,13 +954,13 @@ class BmeshEncoder:
                 continue
 
         logger.info(f"Triangle fan encoding completed: {total_triangles} triangles from {len(bm.faces)} faces "
-                   f"({failed_faces} failed)")
+                    f"({failed_faces} failed)")
         return triangulated_faces
 
     def _create_robust_triangle_fan(
-        self, 
-        face: BMFace, 
-        face_loops: List[BMLoop], 
+        self,  
+        face: BMFace,  
+        face_loops: List[BMLoop],  
         material_index: int
     ) -> List[Tuple[int, Tuple[BMLoop, ...]]]:
         """
@@ -1083,8 +1131,8 @@ class BmeshEncoder:
             return False
 
     def _create_simple_triangle_fan(
-        self, 
-        face_loops: List[BMLoop], 
+        self,  
+        face_loops: List[BMLoop],  
         material_index: int
     ) -> List[Tuple[int, Tuple[BMLoop, ...]]]:
         """
@@ -1238,19 +1286,18 @@ class BmeshEncoder:
         # Build edge-to-face adjacency using native APIs
         edge_face_map = {}
         for poly in mesh.polygons:
-            for edge_key in poly.edge_keys:
-                # Find edge index for this edge key
-                for edge in mesh.edges:
-                    if (edge.vertices[0], edge.vertices[1]) == edge_key or (edge.vertices[1], edge.vertices[0]) == edge_key:
-                        if edge.index not in edge_face_map:
-                            edge_face_map[edge.index] = []
-                        edge_face_map[edge.index].append(poly.index)
-                        break
-
+            for loop_idx in range(poly.loop_start, poly.loop_start + poly.loop_total):
+                loop = mesh.loops[loop_idx]
+                edge_idx = loop.edge_index
+                if edge_idx not in edge_face_map:
+                    edge_face_map[edge_idx] = []
+                if poly.index not in edge_face_map[edge_idx]:
+                     edge_face_map[edge_idx].append(poly.index)
+        
         for edge in mesh.edges:
             # Pack edge vertices (required by schema)
             vertices_buffer.extend(vertex_pair_struct.pack(
-                edge.vertices[0], 
+                edge.vertices[0],  
                 edge.vertices[1]
             ))
             
@@ -1260,13 +1307,11 @@ class BmeshEncoder:
                 faces_buffer.extend(face_index_struct.pack(face_idx))
             
             # Pack manifold status (0=non-manifold, 1=manifold, 255=unknown)
-            manifold_status = len(adjacent_faces) == 2
-            if manifold_status:
-                manifold_buffer.extend(manifold_struct.pack(1))
-            elif len(adjacent_faces) != 2:
-                manifold_buffer.extend(manifold_struct.pack(0))
+            is_manifold = len(adjacent_faces) == 2
+            if self.preserve_manifold_info:
+                 manifold_buffer.extend(manifold_struct.pack(1 if is_manifold else 0))
             else:
-                manifold_buffer.extend(manifold_struct.pack(255))  # Unknown
+                 manifold_buffer.extend(manifold_struct.pack(255)) # Unknown
 
         result = {
             "count": edge_count,
@@ -1323,24 +1368,27 @@ class BmeshEncoder:
                 uv_buffers[f"TEXCOORD_{i}"] = bytearray()
 
         # Build loop navigation data using native mesh APIs
-        for loop in mesh.loops:
-            # Find the polygon this loop belongs to
-            poly = None
-            for polygon in mesh.polygons:
-                if polygon.loop_start <= loop.index < polygon.loop_start + polygon.loop_total:
-                    poly = polygon
-                    break
+        # Precompute polygon for each loop
+        loop_to_poly_map = {}
+        for poly in mesh.polygons:
+            for i in range(poly.loop_start, poly.loop_start + poly.loop_total):
+                loop_to_poly_map[i] = poly
+
+        for loop_idx, loop in enumerate(mesh.loops):
+            poly = loop_to_poly_map.get(loop_idx)
             
             if not poly:
                 # Fallback values for orphaned loops
                 next_idx = prev_idx = radial_next_idx = radial_prev_idx = loop.index
+                face_idx = -1 # Or some other indicator of invalid
             else:
                 # Calculate next and previous in face
-                loop_in_poly = loop.index - poly.loop_start
-                next_in_poly = (loop_in_poly + 1) % poly.loop_total
-                prev_in_poly = (loop_in_poly - 1) % poly.loop_total
+                loop_in_poly_idx = loop.index - poly.loop_start
+                next_in_poly = (loop_in_poly_idx + 1) % poly.loop_total
+                prev_in_poly = (loop_in_poly_idx - 1 + poly.loop_total) % poly.loop_total
                 next_idx = poly.loop_start + next_in_poly
                 prev_idx = poly.loop_start + prev_in_poly
+                face_idx = poly.index
                 
                 # For now, set radial navigation to self (can be improved later)
                 radial_next_idx = radial_prev_idx = loop.index
@@ -1349,7 +1397,7 @@ class BmeshEncoder:
             topology_buffer.extend(topology_struct.pack(
                 loop.vertex_index,  # vertex
                 loop.edge_index,    # edge
-                poly.index if poly else 0,  # face
+                face_idx,           # face
                 next_idx,           # next
                 prev_idx,           # prev
                 radial_next_idx,    # radial_next
@@ -1396,7 +1444,7 @@ class BmeshEncoder:
         
         # Create variable-length arrays for face data
         vertices_buffer = bytearray()
-        edges_buffer = bytearray() 
+        edges_buffer = bytearray()  
         loops_buffer = bytearray()
         normals_buffer = bytearray()
         offsets_buffer = bytearray()
@@ -1409,6 +1457,9 @@ class BmeshEncoder:
         
         vertices_offset = 0
         
+        # Precompute edge_keys to edge_index map for faster lookups
+        edge_map = {tuple(sorted(edge.vertices)): edge.index for edge in mesh.edges}
+
         for poly in mesh.polygons:
             # Record vertex offset for this face (required by schema)
             offsets_buffer.extend(offset_struct.pack(vertices_offset))
@@ -1419,12 +1470,10 @@ class BmeshEncoder:
                 vertices_offset += 1
                 
             # Pack face edges (optional)
-            for edge_key in poly.edge_keys:
-                # Find edge index for this edge key
-                for edge in mesh.edges:
-                    if (edge.vertices[0], edge.vertices[1]) == edge_key or (edge.vertices[1], edge.vertices[0]) == edge_key:
-                        edges_buffer.extend(edge_struct.pack(edge.index))
-                        break
+            for i in range(poly.loop_total):
+                loop = mesh.loops[poly.loop_start + i]
+                edge_idx = loop.edge_index
+                edges_buffer.extend(edge_struct.pack(edge_idx))
                 
             # Pack face loops (optional)
             for loop_idx in range(poly.loop_start, poly.loop_start + poly.loop_total):
@@ -1506,9 +1555,11 @@ class BmeshEncoder:
             safe_ensure_lookup_table(bm.loops, "loops")
             
             # Calculate face indices for consistent material assignment
+            # This is a bit of a workaround; material_index should already be there
             for face in bm.faces:
-                face.material_index = face.material_index
-            
+                 # This line is redundant if from_mesh works correctly, but safe to keep
+                pass
+
             return bm
             
         except Exception as e:
@@ -1556,10 +1607,11 @@ class BmeshEncoder:
             buffer_view = {
                 "buffer": 0,
                 "byteOffset": len(buffer0),
-                "byteLength": len(data),
-                "target": data_info.get("target", "ARRAY_BUFFER")
+                "byteLength": len(data)
             }
-            
+            if "target" in data_info:
+                buffer_view["target"] = data_info["target"]
+
             json_dict["bufferViews"].append(buffer_view)
             buffer0.extend(data)
             
@@ -1589,7 +1641,7 @@ class BmeshEncoder:
                 if offsets_idx is not None:
                     result_vertices["edgeOffsets"] = offsets_idx
                     logger.debug(f"Added vertex edge offsets buffer view: {offsets_idx}")
-                
+            
             result_data["vertices"] = result_vertices
 
         # Process edges  
@@ -1614,7 +1666,7 @@ class BmeshEncoder:
                 if face_offsets_idx is not None:
                     result_edges["faceOffsets"] = face_offsets_idx
                     logger.debug(f"Added edge face offsets buffer view: {face_offsets_idx}")
-                
+            
             manifold_idx = create_buffer_view(edge_data.get("manifold", {}))
             if manifold_idx is not None:
                 result_edges["manifold"] = manifold_idx
