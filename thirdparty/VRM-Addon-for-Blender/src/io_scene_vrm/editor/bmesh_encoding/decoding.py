@@ -111,6 +111,9 @@ class BmeshDecoder:
                 bm.free()
                 return None
 
+            # Step 1.5: Apply vertex attributes (normals, colors, etc.)
+            self._apply_vertex_attributes_from_buffers(bm, vertex_data, vertex_map, parse_result)
+
             # Step 2: Reconstruct non-manifold edges from buffer data
             edge_map = self._reconstruct_edges_from_buffers(bm, edge_data, vertex_map, parse_result)
 
@@ -279,6 +282,85 @@ class BmeshDecoder:
             vertex_map[i] = vert
 
         return vertex_map
+
+    def _apply_vertex_attributes_from_buffers(self, bm: BMesh, vertex_data: Dict[str, Any], vertex_map: Dict[int, BMVert], parse_result: Any) -> None:
+        """Apply vertex attributes (normals, colors, etc.) from buffer data."""
+        vertex_count = vertex_data.get("count", 0)
+        if vertex_count == 0:
+            return
+            
+        # Read vertex attributes if present
+        attributes = vertex_data.get("attributes", {})
+        if not attributes:
+            logger.debug("No vertex attributes found in extension data")
+            return
+            
+        logger.info(f"Applying vertex attributes: {list(attributes.keys())}")
+        
+        # Apply vertex normals
+        if "NORMAL" in attributes:
+            normal_buffer_index = attributes["NORMAL"]
+            normals = self._read_buffer_view(parse_result, normal_buffer_index, 5126, vertex_count, "VEC3")
+            if normals:
+                logger.info(f"Successfully read {len(normals)//3} vertex normals from buffer")
+                for i in range(vertex_count):
+                    vert = vertex_map.get(i)
+                    if vert:
+                        normal_idx = i * 3
+                        if normal_idx + 2 < len(normals):
+                            stored_normal = Vector((
+                                normals[normal_idx],
+                                normals[normal_idx + 1],
+                                normals[normal_idx + 2]
+                            ))
+                            vert.normal = stored_normal
+                            logger.debug(f"Applied vertex normal {stored_normal} to vertex {i}")
+                logger.info(f"Vertex normal preservation: Applied normals to {vertex_count} vertices")
+            else:
+                logger.warning("Failed to read vertex normals from buffer")
+        
+        # Apply vertex colors
+        color_index = 0
+        while f"COLOR_{color_index}" in attributes:
+            color_buffer_index = attributes[f"COLOR_{color_index}"]
+            colors = self._read_buffer_view(parse_result, color_buffer_index, 5126, vertex_count, "VEC4")
+            if colors:
+                logger.info(f"Successfully read {len(colors)//4} vertex colors from buffer (COLOR_{color_index})")
+                
+                # Ensure color layer exists
+                if not bm.loops.layers.color:
+                    bm.loops.layers.color.new()
+                
+                color_layer = bm.loops.layers.color.active
+                if color_layer:
+                    # Apply colors to loops (since Blender vertex colors are per-loop)
+                    loop_index = 0
+                    for face in bm.faces:
+                        for loop in face.loops:
+                            vertex_idx = loop.vert.index if hasattr(loop.vert, 'index') else None
+                            # Find vertex index in our map
+                            for v_idx, vert in vertex_map.items():
+                                if vert == loop.vert:
+                                    vertex_idx = v_idx
+                                    break
+                            
+                            if vertex_idx is not None and vertex_idx < vertex_count:
+                                color_idx = vertex_idx * 4
+                                if color_idx + 3 < len(colors):
+                                    color = (colors[color_idx], colors[color_idx + 1], colors[color_idx + 2], colors[color_idx + 3])
+                                    loop[color_layer] = color[:3]  # BMesh color layers use RGB, not RGBA
+                                    logger.debug(f"Applied vertex color {color[:3]} to loop at vertex {vertex_idx}")
+                            loop_index += 1
+                    logger.info(f"Vertex color preservation: Applied COLOR_{color_index} to loops")
+            else:
+                logger.warning(f"Failed to read vertex colors from buffer (COLOR_{color_index})")
+            
+            color_index += 1
+        
+        # Handle other vertex attributes (extensible for future use)
+        for attr_name, buffer_index in attributes.items():
+            if attr_name not in ["NORMAL"] and not attr_name.startswith("COLOR_"):
+                logger.debug(f"Vertex attribute '{attr_name}' found but not yet supported")
 
     def _reconstruct_edges_from_buffers(self, bm: BMesh, edge_data: Dict[str, Any], vertex_map: Dict[int, BMVert], parse_result: Any) -> Dict[int, BMEdge]:
         """Reconstruct edges from buffer data."""

@@ -1642,6 +1642,15 @@ class BmeshEncoder:
                     result_vertices["edgeOffsets"] = offsets_idx
                     logger.debug(f"Added vertex edge offsets buffer view: {offsets_idx}")
             
+            # Handle vertex attributes (normals, colors, etc.)
+            if "attributes" in vertex_data:
+                result_vertices["attributes"] = {}
+                for attr_name, attr_data in vertex_data["attributes"].items():
+                    attr_idx = create_buffer_view(attr_data)
+                    if attr_idx is not None:
+                        result_vertices["attributes"][attr_name] = attr_idx
+                        logger.debug(f"Added vertex attribute '{attr_name}' buffer view: {attr_idx}")
+            
             result_data["vertices"] = result_vertices
 
         # Process edges  
