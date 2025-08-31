@@ -27,6 +27,12 @@ While glTF can only deliver a polygon mesh after it's been decomposed into trian
 
 This extension provides **buffer-based BMesh encoding** that stores complete topology information in glTF buffers for optimal performance while maintaining full glTF 2.0 compatibility.
 
+The `EXT_bmesh_encoding` glTF extension solves the problem of topological data loss when models with quads and n-gons are converted to glTF's triangle-only format. It works by embedding the **BMesh** data structure, allowing for reconstruction of the original model.
+
+What makes BMesh so powerful is its ability to represent complex, **non-manifold** geometry. Unlike mesh formats that limit an edge to connecting only two faces, BMesh uses a system of **radial loops** (`radial_next` and `radial_prev` pointers).
+
+This is like a book spine that can connect every single page, not just the two covers. This specific mechanism allows for the preservation of models where multiple faces meet at a single edge, ensuring the artist's intent is maintained.
+
 ## Key Features
 
 ### Buffer-Based Storage
