@@ -74,6 +74,7 @@ from .abstract_base_vrm_exporter import (
     assign_dict,
     force_apply_modifiers,
 )
+from ..editor.bmesh_encoding.encoding import BmeshEncoder
 
 logger = get_logger(__name__)
 
@@ -85,6 +86,17 @@ class Vrm0Exporter(AbstractBaseVrmExporter):
         mime_type: str
         image_bytes: bytes
         export_image_index: int
+
+    def __init__(
+        self,
+        context: Context,
+        export_objects: list[Object],
+        *,
+        export_ext_bmesh_encoding: bool = False,
+    ) -> None:
+        super().__init__(context)
+        self.export_objects = export_objects
+        self.export_ext_bmesh_encoding = export_ext_bmesh_encoding
 
     @dataclass
     class PrimitiveTarget:
@@ -2688,6 +2700,82 @@ class Vrm0Exporter(AbstractBaseVrmExporter):
             targets_normal=targets_normal,
         )
 
+    @staticmethod
+    def tessface_fan(
+        bm: Optional[object], *, export_ext_bmesh_encoding: bool = False
+    ) -> list[tuple[int, tuple[object, ...]]]:
+        """
+        Enhanced triangle fan tessellation for EXT_bmesh_encoding.
+        
+        Supports both standard triangulation and EXT_bmesh_encoding hybrid approach.
+        """
+        if not bm:
+            return []
+            
+        if export_ext_bmesh_encoding:
+            # Use EXT_bmesh_encoding hybrid triangle fan algorithm
+            bmesh_encoder = BmeshEncoder()
+            try:
+                return bmesh_encoder.encode_triangle_fan_implicit(bm)
+            except Exception as e:
+                logger.warning(f"EXT_bmesh_encoding failed, falling back to standard triangulation: {e}")
+        
+        # Standard triangulation fallback
+        return [
+            (loops[0].face.material_index, loops)
+            for loops in bm.calc_loop_triangles()
+            if loops
+        ]
+
+    def mesh_to_bin_and_dict(
+        self,
+        obj: Object,
+        mesh_dicts: list[dict[str, Json]],
+        extensions_used: list[str],
+    ) -> None:
+        """Add EXT_bmesh_encoding extension data to mesh if enabled."""
+        if not self.export_ext_bmesh_encoding:
+            return
+            
+        try:
+            # Create BMesh from object for extension data
+            bmesh_encoder = BmeshEncoder()
+            bm = bmesh_encoder.create_bmesh_from_mesh(obj)
+            if not bm:
+                return
+                
+            # Generate EXT_bmesh_encoding extension data
+            extension_data = bmesh_encoder.encode_bmesh_to_gltf_extension(bm)
+            if not extension_data:
+                bm.free()
+                return
+            
+            # Add extension to mesh dict
+            mesh_name = obj.data.name if obj.data else obj.name
+            mesh_dict = next(
+                (mesh for mesh in mesh_dicts if mesh.get("name") == mesh_name), 
+                None
+            )
+            
+            if mesh_dict and "primitives" in mesh_dict:
+                primitives = mesh_dict["primitives"]
+                if isinstance(primitives, list) and primitives:
+                    # Add extension to first primitive (following FB_ngon_encoding pattern)
+                    primitive = primitives[0]
+                    if isinstance(primitive, dict):
+                        if "extensions" not in primitive:
+                            primitive["extensions"] = {}
+                        primitive["extensions"]["EXT_bmesh_encoding"] = extension_data
+                        
+                        # Add to extensions used
+                        if "EXT_bmesh_encoding" not in extensions_used:
+                            extensions_used.append("EXT_bmesh_encoding")
+            
+            bm.free()
+            
+        except Exception as e:
+            logger.error(f"Failed to add EXT_bmesh_encoding to mesh {obj.name}: {e}")
+
     def write_mesh_node(
         self,
         _progress: Progress,
@@ -2901,9 +2989,34 @@ class Vrm0Exporter(AbstractBaseVrmExporter):
 
         uv_layers = main_mesh_data.uv_layers
         uv_layer = uv_layers.active
-        main_mesh_data.calc_loop_triangles()
-        for loop_triangle in main_mesh_data.loop_triangles:
-            material_slot_index = loop_triangle.material_index
+        
+        # Use EXT_bmesh_encoding tessface_fan if enabled, otherwise standard triangulation
+        if self.export_ext_bmesh_encoding:
+            # Create BMesh for enhanced triangle fan processing
+            import bmesh
+            bm = bmesh.new()
+            try:
+                bm.from_mesh(main_mesh_data)
+                triangulated_faces = self.tessface_fan(bm, export_ext_bmesh_encoding=True)
+            except Exception as e:
+                logger.warning(f"EXT_bmesh_encoding tessellation failed: {e}")
+                main_mesh_data.calc_loop_triangles()
+                triangulated_faces = [
+                    (loop_triangle.material_index, tuple(main_mesh_data.loops[i] for i in loop_triangle.loops))
+                    for loop_triangle in main_mesh_data.loop_triangles
+                ]
+            finally:
+                bm.free()
+        else:
+            # Standard triangulation
+            main_mesh_data.calc_loop_triangles()
+            triangulated_faces = [
+                (loop_triangle.material_index, tuple(main_mesh_data.loops[i] for i in loop_triangle.loops))
+                for loop_triangle in main_mesh_data.loop_triangles
+            ]
+        
+        # Process triangulated faces (works for both EXT_bmesh_encoding and standard)
+        for material_slot_index, loops in triangulated_faces:
             material_name = material_slot_index_to_material_name.get(
                 material_slot_index
             )
@@ -2923,8 +3036,18 @@ class Vrm0Exporter(AbstractBaseVrmExporter):
                 vertex_indices = bytearray()
                 material_index_to_vertex_indices[material_index] = vertex_indices
 
-            for loop_index in loop_triangle.loops:
-                loop = main_mesh_data.loops[loop_index]
+            for loop in loops:
+                # Find loop index by searching through all loops
+                loop_index = None
+                for i, mesh_loop in enumerate(main_mesh_data.loops):
+                    if mesh_loop == loop:
+                        loop_index = i
+                        break
+                
+                if loop_index is None:
+                    # Fallback: use vertex index as approximation
+                    loop_index = loop.vertex_index
+                
                 original_vertex_index = loop.vertex_index
                 vertex_index = self.collect_vertex(
                     obj,
@@ -3214,12 +3337,16 @@ class Vrm0Exporter(AbstractBaseVrmExporter):
                     "targetNames": [target.name for target in primitive_targets]
                 }
 
-        mesh_dicts.append(
-            {
-                "name": original_mesh_convertible.name,
-                "primitives": make_json(primitive_dicts),
-            }
-        )
+        mesh_dict = {
+            "name": original_mesh_convertible.name,
+            "primitives": make_json(primitive_dicts),
+        }
+        mesh_dicts.append(mesh_dict)
+        
+        # Add EXT_bmesh_encoding extension data to mesh if enabled
+        if self.export_ext_bmesh_encoding:
+            self.mesh_to_bin_and_dict(obj, mesh_dicts, extensions_used)
+        
         mesh_object_name_to_mesh_index[obj.name] = mesh_index
         if skin_dict and have_skin:
             # TODO: Create separate skin for each mesh

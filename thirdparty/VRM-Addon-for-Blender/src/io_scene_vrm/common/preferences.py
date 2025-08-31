@@ -105,6 +105,7 @@ class ExportPreferencesProtocol(Protocol):
     export_invisibles: bool
     export_only_selections: bool
     enable_advanced_preferences: bool
+    export_ext_bmesh_encoding: bool
     export_all_influences: bool
     export_lights: bool
     export_gltf_animations: bool
@@ -118,6 +119,7 @@ def copy_export_preferences(
         destination.export_invisibles,
         destination.export_only_selections,
         destination.enable_advanced_preferences,
+        destination.export_ext_bmesh_encoding,
         destination.export_all_influences,
         destination.export_lights,
         destination.export_gltf_animations,
@@ -126,6 +128,7 @@ def copy_export_preferences(
         source.export_invisibles,
         source.export_only_selections,
         source.enable_advanced_preferences,
+        source.export_ext_bmesh_encoding,
         source.export_all_influences,
         source.export_lights,
         source.export_gltf_animations,
@@ -167,6 +170,19 @@ def draw_export_preferences_layout(
         return
 
     advanced_options_column = layout.box().column()
+
+    # EXT_bmesh_encoding extension
+    draw_advanced_options_description(
+        preferences,
+        "export_ext_bmesh_encoding",
+        advanced_options_column,
+        pgettext(
+            "Preserves complete BMesh topology\n"
+            + "(vertices, edges, loops, faces) using\n"
+            + "EXT_bmesh_encoding extension.\n"
+            + "Provides graceful fallback to standard glTF."
+        ),
+    )
 
     # UniVRM 0.115.0 doesn't support `export_try_sparse_sk`
     # https://github.com/saturday06/VRM-Addon-for-Blender/issues/381#issuecomment-1838365762
@@ -285,6 +301,11 @@ class VrmAddonPreferences(AddonPreferences):
     )
     enable_advanced_preferences: BoolProperty(  # type: ignore[valid-type]
         name="Enable Advanced Options",
+    )
+    export_ext_bmesh_encoding: BoolProperty(  # type: ignore[valid-type]
+        name="Export EXT_bmesh_encoding",
+        description="Enable BMesh topology preservation using EXT_bmesh_encoding extension",
+        default=False,
     )
     export_all_influences: BoolProperty(  # type: ignore[valid-type]
         name="Export All Bone Influences",
