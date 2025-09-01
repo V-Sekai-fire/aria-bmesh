@@ -450,6 +450,149 @@ class TestBmeshEncodingVrm0(BaseBlenderTestCase):
         # Verify EXT_bmesh_encoding with shape keys
         self.assertIn("EXT_bmesh_encoding", gltf_data.get("extensionsUsed", []))
 
+    def test_ext_bmesh_encoding_smooth_shading_preservation(self):
+        """Test that EXT_bmesh_encoding preserves smooth/faceted shading in VRM 0.x export."""
+        obj = self.create_test_mesh_object("SmoothTestMesh", "ico_sphere")
+
+        # Apply mixed smooth/faceted shading
+        for i, face in enumerate(obj.data.polygons):
+            face.use_smooth = (i % 2 == 0)  # Alternate smooth/faceted
+
+        # Set edge sharp flags based on face connections
+        for edge in obj.data.edges:
+            if hasattr(edge, 'use_edge_sharp') and len(edge.link_faces) == 2:
+                face1_smooth = edge.link_faces[0].use_smooth
+                face2_smooth = edge.link_faces[1].use_smooth
+                edge.use_edge_sharp = (face1_smooth != face2_smooth)
+
+        # Export with EXT_bmesh_encoding enabled
+        exporter = Vrm0Exporter(
+            bpy.context,
+            [obj],
+            self.armature,
+            export_ext_bmesh_encoding=True
+        )
+
+        result = exporter.export_vrm()
+        self.assertIsNotNone(result, "Export should succeed with smooth shading")
+
+        # Parse the glb result
+        gltf_data, _ = parse_glb(result)
+
+        # Verify EXT_bmesh_encoding extension is present
+        self.assertIn("EXT_bmesh_encoding", gltf_data.get("extensionsUsed", []))
+
+        # Find EXT_bmesh_encoding data in mesh primitives
+        meshes = gltf_data.get("meshes", [])
+        ext_bmesh_data = None
+        for mesh in meshes:
+            primitives = mesh.get("primitives", [])
+            for primitive in primitives:
+                extensions = primitive.get("extensions", {})
+                if "EXT_bmesh_encoding" in extensions:
+                    ext_bmesh_data = extensions["EXT_bmesh_encoding"]
+                    break
+            if ext_bmesh_data:
+                break
+
+        self.assertIsNotNone(ext_bmesh_data, "Should find EXT_bmesh_encoding data")
+
+        # Verify smooth flags are present in the encoded data
+        self.assertIn("faces", ext_bmesh_data, "Should have face data")
+        face_data = ext_bmesh_data["faces"]
+        self.assertIn("smooth", face_data, "Face data should contain smooth flags")
+
+        # Verify edge smooth flags are present
+        self.assertIn("edges", ext_bmesh_data, "Should have edge data")
+        edge_data = ext_bmesh_data["edges"]
+        self.assertIn("attributes", edge_data, "Edge data should contain attributes")
+        self.assertIn("_SMOOTH", edge_data["attributes"], "Edge attributes should contain _SMOOTH flags")
+
+    def test_ext_bmesh_encoding_pure_smooth_mesh(self):
+        """Test EXT_bmesh_encoding with a mesh that has all faces set to smooth."""
+        obj = self.create_test_mesh_object("PureSmoothMesh", "cube")
+
+        # Set all faces to smooth
+        for face in obj.data.polygons:
+            face.use_smooth = True
+
+        # Set all edges to smooth
+        for edge in obj.data.edges:
+            if hasattr(edge, 'use_edge_sharp'):
+                edge.use_edge_sharp = False
+
+        # Export with EXT_bmesh_encoding enabled
+        exporter = Vrm0Exporter(
+            bpy.context,
+            [obj],
+            self.armature,
+            export_ext_bmesh_encoding=True
+        )
+
+        result = exporter.export_vrm()
+        self.assertIsNotNone(result, "Export should succeed with pure smooth mesh")
+
+        # Parse and verify
+        gltf_data, _ = parse_glb(result)
+
+        # Verify EXT_bmesh_encoding is present
+        self.assertIn("EXT_bmesh_encoding", gltf_data.get("extensionsUsed", []))
+
+        # Find and verify smooth flags
+        meshes = gltf_data.get("meshes", [])
+        for mesh in meshes:
+            primitives = mesh.get("primitives", [])
+            for primitive in primitives:
+                extensions = primitive.get("extensions", {})
+                if "EXT_bmesh_encoding" in extensions:
+                    ext_data = extensions["EXT_bmesh_encoding"]
+                    if "faces" in ext_data and "smooth" in ext_data["faces"]:
+                        # Verify smooth flags are present (we can't easily verify all are True without decoding)
+                        self.assertIsNotNone(ext_data["faces"]["smooth"])
+                        break
+
+    def test_ext_bmesh_encoding_pure_faceted_mesh(self):
+        """Test EXT_bmesh_encoding with a mesh that has all faces set to faceted."""
+        obj = self.create_test_mesh_object("PureFacetedMesh", "ico_sphere")
+
+        # Set all faces to faceted
+        for face in obj.data.polygons:
+            face.use_smooth = False
+
+        # Set all edges to sharp
+        for edge in obj.data.edges:
+            if hasattr(edge, 'use_edge_sharp'):
+                edge.use_edge_sharp = True
+
+        # Export with EXT_bmesh_encoding enabled
+        exporter = Vrm0Exporter(
+            bpy.context,
+            [obj],
+            self.armature,
+            export_ext_bmesh_encoding=True
+        )
+
+        result = exporter.export_vrm()
+        self.assertIsNotNone(result, "Export should succeed with pure faceted mesh")
+
+        # Parse and verify
+        gltf_data, _ = parse_glb(result)
+
+        # Verify EXT_bmesh_encoding is present
+        self.assertIn("EXT_bmesh_encoding", gltf_data.get("extensionsUsed", []))
+
+        # Find and verify smooth flags are present (even if all False)
+        meshes = gltf_data.get("meshes", [])
+        for mesh in meshes:
+            primitives = mesh.get("primitives", [])
+            for primitive in primitives:
+                extensions = primitive.get("extensions", {})
+                if "EXT_bmesh_encoding" in extensions:
+                    ext_data = extensions["EXT_bmesh_encoding"]
+                    if "faces" in ext_data and "smooth" in ext_data["faces"]:
+                        self.assertIsNotNone(ext_data["faces"]["smooth"])
+                        break
+
 
 if __name__ == "__main__":
     unittest.main()

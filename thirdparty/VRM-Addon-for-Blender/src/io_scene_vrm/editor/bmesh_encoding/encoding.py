@@ -444,15 +444,17 @@ class BmeshEncoder:
         
         # Create variable-length arrays for face data
         vertices_buffer = bytearray()
-        edges_buffer = bytearray()  
+        edges_buffer = bytearray()
         loops_buffer = bytearray()
         normals_buffer = bytearray()
+        smooth_buffer = bytearray()
         offsets_buffer = bytearray()
-        
+
         vertex_struct = struct.Struct("<I")
         edge_struct = struct.Struct("<I")
         loop_struct = struct.Struct("<I")
         normal_struct = struct.Struct("<fff")
+        smooth_struct = struct.Struct("<B")
         offset_struct = struct.Struct("<I")
         
         vertices_offset = 0
@@ -486,6 +488,9 @@ class BmeshEncoder:
                     
             # Pack face normal (Vec3<f32> per face)
             normals_buffer.extend(normal_struct.pack(*face.normal))
+
+            # Pack face smooth flag (1=smooth, 0=faceted/hard)
+            smooth_buffer.extend(smooth_struct.pack(1 if face.smooth else 0))
 
         # Final offset (required: u32 per face + 1)
         offsets_buffer.extend(offset_struct.pack(vertices_offset))
@@ -532,7 +537,16 @@ class BmeshEncoder:
                 "type": "VEC3",
                 "count": face_count
             }
-        
+
+        if smooth_buffer:
+            result["smooth"] = {
+                "data": smooth_buffer,
+                "target": 34962,  # GL_ARRAY_BUFFER
+                "componentType": 5121,  # GL_UNSIGNED_BYTE
+                "type": "SCALAR",
+                "count": face_count
+            }
+
         return result
 
     def _find_radial_loop_indices_direct(
@@ -829,15 +843,17 @@ class BmeshEncoder:
         
         # Create variable-length arrays for face data
         vertices_buffer = bytearray()
-        edges_buffer = bytearray()  
+        edges_buffer = bytearray()
         loops_buffer = bytearray()
         normals_buffer = bytearray()
+        smooth_buffer = bytearray()
         offsets_buffer = bytearray()
-        
+
         vertex_struct = struct.Struct("<I")
         edge_struct = struct.Struct("<I")
         loop_struct = struct.Struct("<I")
         normal_struct = struct.Struct("<fff")
+        smooth_struct = struct.Struct("<B")
         offset_struct = struct.Struct("<I")
         
         vertices_offset = 0
@@ -867,6 +883,9 @@ class BmeshEncoder:
                 
             # Pack face normal (Vec3<f32> per face)
             normals_buffer.extend(normal_struct.pack(*face.normal))
+
+            # Pack face smooth flag (1=smooth, 0=faceted/hard)
+            smooth_buffer.extend(smooth_struct.pack(1 if face.smooth else 0))
 
         # Final offset (required: u32 per face + 1)
         offsets_buffer.extend(offset_struct.pack(vertices_offset))
@@ -913,7 +932,16 @@ class BmeshEncoder:
                 "type": "VEC3",
                 "count": face_count
             }
-        
+
+        if smooth_buffer:
+            result["smooth"] = {
+                "data": smooth_buffer,
+                "target": 34962,  # GL_ARRAY_BUFFER
+                "componentType": 5121,  # GL_UNSIGNED_BYTE
+                "type": "SCALAR",
+                "count": face_count
+            }
+
         return result
 
     def _calculate_edge_manifold_status(self, edge: BMEdge) -> Optional[bool]:
@@ -1558,15 +1586,17 @@ class BmeshEncoder:
         
         # Create variable-length arrays for face data
         vertices_buffer = bytearray()
-        edges_buffer = bytearray()  
+        edges_buffer = bytearray()
         loops_buffer = bytearray()
         normals_buffer = bytearray()
+        smooth_buffer = bytearray()
         offsets_buffer = bytearray()
-        
+
         vertex_struct = struct.Struct("<I")
         edge_struct = struct.Struct("<I")
         loop_struct = struct.Struct("<I")
         normal_struct = struct.Struct("<fff")
+        smooth_struct = struct.Struct("<B")
         offset_struct = struct.Struct("<I")
         
         vertices_offset = 0
@@ -1596,6 +1626,9 @@ class BmeshEncoder:
             # Pack face normal (Vec3<f32> per face)
             normals_buffer.extend(normal_struct.pack(*poly.normal))
 
+            # Pack face smooth flag (1=smooth, 0=faceted/hard)
+            smooth_buffer.extend(smooth_struct.pack(1 if poly.use_smooth else 0))
+
         # Final offset (required: u32 per face + 1)
         offsets_buffer.extend(offset_struct.pack(vertices_offset))
 
@@ -1624,7 +1657,7 @@ class BmeshEncoder:
                 "componentType": 5125,  # GL_UNSIGNED_INT
                 "type": "SCALAR"
             }
-        
+
         if loops_buffer:
             result["loops"] = {
                 "data": loops_buffer,
@@ -1632,7 +1665,7 @@ class BmeshEncoder:
                 "componentType": 5125,  # GL_UNSIGNED_INT
                 "type": "SCALAR"
             }
-        
+
         if normals_buffer:
             result["normals"] = {
                 "data": normals_buffer,
@@ -1641,7 +1674,16 @@ class BmeshEncoder:
                 "type": "VEC3",
                 "count": face_count
             }
-        
+
+        # Always include smooth buffer - required for face attributes
+        result["smooth"] = {
+            "data": smooth_buffer,
+            "target": 34962,  # GL_ARRAY_BUFFER
+            "componentType": 5121,  # GL_UNSIGNED_BYTE
+            "type": "SCALAR",
+            "count": face_count
+        }
+
         return result
 
     @staticmethod
@@ -1834,7 +1876,7 @@ class BmeshEncoder:
             result_faces = {"count": face_data["count"]}
             logger.info(f"Processing faces: count={face_data['count']}")
             
-            for key in ["vertices", "edges", "loops", "normals", "offsets"]:
+            for key in ["vertices", "edges", "loops", "normals", "offsets", "smooth"]:
                 if key in face_data:
                     buffer_idx = create_buffer_view(face_data[key])
                     if buffer_idx is not None:

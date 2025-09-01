@@ -358,6 +358,22 @@ class BmeshDecoder:
         if not face_vertices_data:
             return face_map
 
+        # Handle face smooth flags if available
+        face_smooth_flags = None
+        smooth_attr = face_data.get("smooth")
+        if smooth_attr is not None:
+            if isinstance(smooth_attr, dict) and "data" in smooth_attr:
+                data = smooth_attr["data"]
+                if isinstance(data, (bytes, bytearray)):
+                    face_smooth_flags = struct.unpack(f"<{face_count}B", data)
+                    smooth_count = sum(1 for flag in face_smooth_flags if flag)
+                    flat_count = len(face_smooth_flags) - smooth_count
+                    logger.debug(f"Read {len(face_smooth_flags)} face smooth flags from direct data: {smooth_count} smooth, {flat_count} flat")
+                else:
+                    logger.warning(f"Face smooth data is not bytes/bytearray: {type(data)}")
+            else:
+                logger.warning(f"Face smooth attribute has unexpected format: {type(smooth_attr)}")
+
         # Create faces
         for i in range(face_count):
             vertex_start = offsets[i]
@@ -377,6 +393,12 @@ class BmeshDecoder:
                 try:
                     face = bm.faces.new(face_verts)
                     face_map[i] = face
+
+                    # Apply stored face smooth flag if available
+                    if face_smooth_flags and i < len(face_smooth_flags):
+                        face.smooth = bool(face_smooth_flags[i])
+                        logger.debug(f"Applied smooth flag {bool(face_smooth_flags[i])} to face {i}")
+
                 except ValueError as e:
                     logger.warning(f"Failed to create face {i}: {e}")
 
@@ -539,36 +561,37 @@ class BmeshDecoder:
     def apply_bmesh_to_blender_mesh(self, bm: BMesh, mesh: bpy.types.Mesh) -> bool:
         """Apply reconstructed BMesh data to Blender mesh."""
         try:
+            # Store BMesh face smooth flags before conversion
+            bmesh_smooth_flags = {}
+            for i, face in enumerate(bm.faces):
+                bmesh_smooth_flags[i] = face.smooth
+
             # Update the mesh with BMesh data
             bm.to_mesh(mesh)
-            
+
+            # Manually transfer face smooth flags from BMesh to mesh
+            # The bm.to_mesh() call may not preserve face smooth flags correctly
+            if bmesh_smooth_flags:
+                for i, face in enumerate(mesh.polygons):
+                    if i in bmesh_smooth_flags:
+                        face.use_smooth = bmesh_smooth_flags[i]
+                        logger.debug(f"Transferred smooth flag {bmesh_smooth_flags[i]} to mesh face {i}")
+
             # Handle smooth shading based on Blender version
-            if bpy.app.version < (4, 1):
-                # Blender 4.0 and earlier: use auto smooth
+            # Note: Face smooth flags were already set during BMesh reconstruction
+            # Only apply auto smooth for older Blender versions when no face smooth flags are set
+            if bpy.app.version < (4, 1) and not bmesh_smooth_flags:
+                # Blender 4.0 and earlier: use auto smooth only when no face smooth flags are manually set
                 mesh.use_auto_smooth = True
-                logger.info("Applied auto smooth for Blender 4.0 and earlier")
+                logger.info("Applied auto smooth for Blender 4.0 and earlier (no manual face smooth flags)")
             else:
-                # Blender 4.1+: use per-face smooth flags
-                # Convert edge smooth flags to face smooth flags
-                for poly in mesh.polygons:
-                    # Check if all edges of this face are smooth
-                    all_edges_smooth = True
-                    for loop_idx in range(poly.loop_start, poly.loop_start + poly.loop_total):
-                        loop = mesh.loops[loop_idx]
-                        edge = mesh.edges[loop.edge_index]
-                        if hasattr(edge, 'use_edge_sharp') and edge.use_edge_sharp:
-                            all_edges_smooth = False
-                            break
-                    
-                    # Set face smooth flag based on edge smoothness
-                    poly.use_smooth = all_edges_smooth
-                
-                logger.info("Applied per-face smooth flags for Blender 4.1+")
-            
+                # Blender 4.1+ or when face smooth flags are manually set: preserve face smooth flags
+                logger.info("Preserved face smooth flags from BMesh reconstruction")
+
             # Ensure proper mesh finalization for smooth shading preservation
             mesh.update()
             mesh.calc_loop_triangles()
-            
+
             # Calculate normals to respect edge smooth flags
             # Use the correct method based on Blender version
             if hasattr(mesh, 'calc_normals'):
@@ -577,10 +600,10 @@ class BmeshDecoder:
                 mesh.calc_normals_split()
             else:
                 logger.warning("No normal calculation method available")
-            
+
             logger.info("Successfully applied BMesh to Blender mesh with surface smoothness preservation")
             return True
-            
+
         except Exception as e:
             logger.error(f"Failed to apply BMesh to Blender mesh: {e}")
             return False
@@ -1016,6 +1039,26 @@ class BmeshDecoder:
                 else:
                     logger.warning("Failed to read face normals from buffer")
 
+        # Read face smooth flags if available
+        smooth_buffer_index = face_data.get("smooth")
+        face_smooth_flags = None
+        if smooth_buffer_index is not None:
+            if is_direct_data and isinstance(smooth_buffer_index, dict) and "data" in smooth_buffer_index:
+                data = smooth_buffer_index["data"]
+                if isinstance(data, (bytes, bytearray)):
+                    face_smooth_flags = struct.unpack(f"<{face_count}B", data)
+                    smooth_count = sum(1 for flag in face_smooth_flags if flag)
+                    flat_count = len(face_smooth_flags) - smooth_count
+                    logger.info(f"Successfully read {len(face_smooth_flags)} face smooth flags from direct data: {smooth_count} smooth, {flat_count} flat")
+            elif not is_direct_data and isinstance(smooth_buffer_index, int):
+                face_smooth_flags = self._read_buffer_view(parse_result, smooth_buffer_index, 5121, face_count, "SCALAR")
+                if face_smooth_flags:
+                    smooth_count = sum(1 for flag in face_smooth_flags if flag)
+                    flat_count = len(face_smooth_flags) - smooth_count
+                    logger.info(f"Successfully read {len(face_smooth_flags)} face smooth flags from buffer: {smooth_count} smooth, {flat_count} flat")
+                else:
+                    logger.warning("Failed to read face smooth flags from buffer")
+
         # Create faces
         for i in range(face_count):
             vertex_start = offsets[i]
@@ -1049,8 +1092,16 @@ class BmeshDecoder:
                         face.normal = stored_normal
                         logger.debug(f"Applied stored normal {stored_normal} to face {i}")
 
+                    # Apply stored face smooth flag if available
+                    if face_smooth_flags and i < len(face_smooth_flags):
+                        face.smooth = bool(face_smooth_flags[i])
+                        logger.debug(f"Applied smooth flag {bool(face_smooth_flags[i])} to face {i}")
+
                 except ValueError as e:
                     logger.warning(f"Failed to create face {i}: {e}")
+                    # Remove the face from the map if creation failed
+                    if i in face_map:
+                        del face_map[i]
 
         # Log normal preservation status
         if face_normals:
