@@ -33,6 +33,57 @@ class TestBmeshEncodingEdgeCases(BaseBlenderTestCase):
         self.bmesh_encoder = BmeshEncoder()
         self.bmesh_decoder = BmeshDecoder()
 
+    def create_test_mesh_object(self, name="TestMesh", topology_type="ico_sphere"):
+        """Create a test mesh with specified topology."""
+        mesh = bpy.data.meshes.new(name)
+        obj = bpy.data.objects.new(name, mesh)
+
+        bpy.context.collection.objects.link(obj)
+
+        # Create mesh based on topology type
+        bm = bmesh.new()
+        bm.from_mesh(mesh)
+
+        if topology_type == "cube":
+            # Add a simple cube
+            bmesh.ops.create_cube(bm, size=2.0)
+        elif topology_type == "ico_sphere":
+            # Add an icosphere with non-uniform triangulation
+            bmesh.ops.create_icosphere(bm, subdivisions=2, radius=1.0)
+        elif topology_type == "complex":
+            # Create a more complex mesh with various face types
+            verts = []
+            faces = []
+
+            # Add vertices in a pattern
+            for x in range(-2, 3):
+                for y in range(-1, 2):
+                    for z in range(-2, 3):
+                        verts.append((x, y, z))
+
+            # Add faces creating different topologies
+            for x in range(-2, 2):
+                for z in range(-2, 2):
+                    # Create quad faces (will be triangulated)
+                    faces.append([
+                        ((x+2) * 3 + (z+2)),
+                        ((x+2) * 3 + (z+3)),
+                        ((x+3) * 3 + (z+3)),
+                        ((x+3) * 3 + (z+2))
+                    ])
+
+            bm.verts.ensure_lookup_table()
+            bm.faces.ensure_lookup_table()
+            for vert_pos in verts:
+                bm.verts.new(vert_pos)
+            for face_verts in faces:
+                bm.faces.new([bm.verts[i] for i in face_verts])
+
+        bm.to_mesh(mesh)
+        bm.free()
+
+        return obj
+
     def create_maze_mesh(self, name="MazeMesh"):
         """Create a complex maze-like mesh with many small faces."""
         mesh = bpy.data.meshes.new(name)

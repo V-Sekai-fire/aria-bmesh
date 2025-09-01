@@ -19,6 +19,8 @@ sys.path.insert(0, str(src_dir))
 from .base_blender_test_case import BaseBlenderTestCase
 from io_scene_vrm.editor.bmesh_encoding.encoding import BmeshEncoder
 from io_scene_vrm.editor.bmesh_encoding.decoding import BmeshDecoder
+from io_scene_vrm.common import ops
+from io_scene_vrm.common.logger import get_logger
 
 
 class TestBmeshEncodingRoundtrip(BaseBlenderTestCase):
@@ -28,6 +30,57 @@ class TestBmeshEncodingRoundtrip(BaseBlenderTestCase):
         super().setUp()
         self.bmesh_encoder = BmeshEncoder()
         self.bmesh_decoder = BmeshDecoder()
+
+    def create_test_mesh_object(self, name="TestMesh", topology_type="ico_sphere"):
+        """Create a test mesh with specified topology."""
+        mesh = bpy.data.meshes.new(name)
+        obj = bpy.data.objects.new(name, mesh)
+
+        bpy.context.collection.objects.link(obj)
+
+        # Create mesh based on topology type
+        bm = bmesh.new()
+        bm.from_mesh(mesh)
+
+        if topology_type == "cube":
+            # Add a simple cube
+            bmesh.ops.create_cube(bm, size=2.0)
+        elif topology_type == "ico_sphere":
+            # Add an icosphere with non-uniform triangulation
+            bmesh.ops.create_icosphere(bm, subdivisions=2, radius=1.0)
+        elif topology_type == "complex":
+            # Create a more complex mesh with various face types
+            verts = []
+            faces = []
+
+            # Add vertices in a pattern
+            for x in range(-2, 3):
+                for y in range(-1, 2):
+                    for z in range(-2, 3):
+                        verts.append((x, y, z))
+
+            # Add faces creating different topologies
+            for x in range(-2, 2):
+                for z in range(-2, 2):
+                    # Create quad faces (will be triangulated)
+                    faces.append([
+                        ((x+2) * 3 + (z+2)),
+                        ((x+2) * 3 + (z+3)),
+                        ((x+3) * 3 + (z+3)),
+                        ((x+3) * 3 + (z+2))
+                    ])
+
+            bm.verts.ensure_lookup_table()
+            bm.faces.ensure_lookup_table()
+            for vert_pos in verts:
+                bm.verts.new(vert_pos)
+            for face_verts in faces:
+                bm.faces.new([bm.verts[i] for i in face_verts])
+
+        bm.to_mesh(mesh)
+        bm.free()
+
+        return obj
 
     def create_complex_topology_mesh(self, name="ComplexTopologyMesh"):
         """Create a mesh with complex topology including ngons and quads."""
@@ -69,23 +122,36 @@ class TestBmeshEncodingRoundtrip(BaseBlenderTestCase):
         bm.faces.new([bm.verts[2], bm.verts[0], bm.verts[5], bm.verts[6]])  # base quad 3
 
         # Additional complex faces
-        bm.faces.new([bm.verts[1], bm.verts[4], bm.verts[6], bm.verts[2]])  # middle quad
+        # Removed duplicate face creation that was causing "face already exists" error
+
+        # Calculate sharp edges based on angle before freeing BMesh
+        angles = {}
+        for edge in bm.edges:
+            if len(edge.link_faces) == 2:
+                normal1 = edge.link_faces[0].normal
+                normal2 = edge.link_faces[1].normal
+
+                # Skip edges with degenerate faces (zero-length normals)
+                if normal1.length < 1e-6 or normal2.length < 1e-6:
+                    continue
+
+                angle = normal1.angle(normal2)
+                angles[edge] = math.degrees(angle)
+                if angle > math.pi / 3:  # 60 degrees
+                    edge.smooth = False  # Mark as sharp in BMesh
 
         bm.to_mesh(mesh)
         bm.free()
 
-        # Add some crease data and custom normals
+        # Add crease data to mesh edges
         for edge in mesh.edges:
             edge.crease = 0.5
-
-        # Calculate sharp edges based on angle
-        angles = {}
-        for edge in mesh.edges:
-            if len(edge.link_faces) == 2:
-                angle = edge.link_faces[0].normal.angle(edge.link_faces[1].normal)
-                angles[edge] = math.degrees(angle)
-                if angle > math.pi / 3:  # 60 degrees
-                    edge.use_edge_sharp = True
+            # Transfer sharp marking from BMesh calculation
+            # Note: We can't directly map BMesh edges to Mesh edges easily,
+            # so we'll apply sharp marking based on angle threshold
+            if hasattr(edge, 'use_edge_sharp'):
+                # This would require more complex mapping, so for now just set crease
+                pass
 
         return obj, angles
 
@@ -339,7 +405,8 @@ class TestBmeshEncodingRoundtrip(BaseBlenderTestCase):
 
     def test_roundtrip_vrm0_export_pipeline(self):
         """Test full VRM 0.x export pipeline with EXT_bmesh_encoding preserves fidelity."""
-        armature = self.create_humanoid_armature()
+        ops.icyp.make_basic_armature()
+        armature = bpy.context.view_layer.objects.active
 
         # Create test mesh with complex topology
         obj = self.create_test_mesh_object("VRM0Pipeline", "ico_sphere")
