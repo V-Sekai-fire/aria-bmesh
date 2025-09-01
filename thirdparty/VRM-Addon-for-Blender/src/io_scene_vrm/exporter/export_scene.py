@@ -142,6 +142,7 @@ class EXPORT_SCENE_OT_vrm(Operator, ExportHelper):
             self,
             context,
             armature_object_name=self.armature_object_name,
+            export_ext_bmesh_encoding=self.export_ext_bmesh_encoding,
         )
 
     def invoke(self, context: Context, event: Event) -> set[str]:
@@ -263,6 +264,7 @@ def export_vrm(
     context: Context,
     *,
     armature_object_name: str,
+    export_ext_bmesh_encoding: bool = False,
 ) -> set[str]:
     if ops.vrm.model_validate(
         "INVOKE_DEFAULT",
@@ -330,7 +332,7 @@ def export_vrm(
                 context,
                 export_objects,
                 armature_object,
-                export_ext_bmesh_encoding=export_preferences.export_ext_bmesh_encoding,
+                export_ext_bmesh_encoding=export_ext_bmesh_encoding,
             )
 
         vrm_bytes = vrm_exporter.export_vrm()

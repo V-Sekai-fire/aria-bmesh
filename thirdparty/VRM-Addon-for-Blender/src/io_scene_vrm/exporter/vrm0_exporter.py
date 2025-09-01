@@ -74,6 +74,8 @@ from .abstract_base_vrm_exporter import (
     assign_dict,
     force_apply_modifiers,
 )
+from ..editor.bmesh_encoding.encoding import BmeshEncoder
+import bmesh
 
 logger = get_logger(__name__)
 
@@ -91,8 +93,10 @@ class Vrm0Exporter(AbstractBaseVrmExporter):
         context: Context,
         export_objects: list[Object],
         armature: Object,
+        export_ext_bmesh_encoding: bool = False,
     ) -> None:
         super().__init__(context, export_objects, armature)
+        self.export_ext_bmesh_encoding = export_ext_bmesh_encoding
 
     @dataclass
     class PrimitiveTarget:
@@ -300,6 +304,16 @@ class Vrm0Exporter(AbstractBaseVrmExporter):
             mesh_object_name_to_mesh_index,
             material_name_to_material_index,
         )
+        # Add EXT_bmesh_encoding support if enabled
+        if self.export_ext_bmesh_encoding:
+            self.add_ext_bmesh_encoding_to_meshes(
+                json_dict,
+                buffer0,
+                extensions_used,
+                bone_name_to_node_index,
+                mesh_object_name_to_mesh_index,
+            )
+
         self.write_extensions_vrm(
             progress,
             mesh_dicts,
@@ -2680,19 +2694,55 @@ class Vrm0Exporter(AbstractBaseVrmExporter):
             targets_normal=targets_normal,
         )
 
-    @staticmethod
-    def tessface_fan(bm: Optional[object]) -> list[tuple[int, tuple[object, ...]]]:
+    def tessface_fan(self, bm: Optional[object], obj: Optional[Object] = None) -> list[tuple[int, tuple[object, ...]]]:
         """
-        Standard triangulation for VRM 0.x export.
-        
-        VRM 0.x uses standard triangulation only. EXT_bmesh_encoding
-        topology preservation is only available in VRM 1.x.
+        Conditional triangulation for VRM 0.x export.
+
+        When EXT_bmesh_encoding is enabled, preserves original topology.
+        Otherwise uses standard triangulation for backward compatibility.
         """
         if not bm:
             logger.debug("No BMesh provided for tessellation")
             return []
-        
-        # VRM 0.x: Use standard triangulation only
+
+        if self.export_ext_bmesh_encoding and obj:
+            logger.debug("EXT_bmesh_encoding enabled - preserving original topology")
+            try:
+                # Use BmeshEncoder for topology preservation
+                from ..editor.bmesh_encoding.encoding import BmeshEncoder
+                bmesh_encoder = BmeshEncoder()
+
+                # Convert BMesh to triangle face loops with topology preservation
+                logger.debug(f"Processing BMesh with {len(bm.faces)} faces for EXT_bmesh_encoding")
+
+                result = []
+                for face in bm.faces:
+                    if len(face.loops) < 3:
+                        logger.warning(f"Skipping face with insufficient loops: {len(face.loops)}")
+                        continue
+
+                    material_index = face.material_index if hasattr(face, 'material_index') else 0
+
+                    # For quads and ngons, fan triangulate while preserving loop topology
+                    face_loops = list(face.loops)
+                    if len(face_loops) == 3:
+                        # Triangle - use as is
+                        result.append((material_index, tuple(face_loops)))
+                    else:
+                        # Quad/ngon - fan triangulate
+                        first_loop = face_loops[0]
+                        for i in range(1, len(face_loops) - 1):
+                            triangle_loops = (first_loop, face_loops[i], face_loops[i + 1])
+                            result.append((material_index, triangle_loops))
+
+                logger.debug(f"EXT_bmesh_encoding triangulation completed: {len(result)} triangles with topology preservation")
+                return result
+
+            except Exception as e:
+                logger.error(f"EXT_bmesh_encoding triangulation failed, falling back to standard: {e}")
+                # Fall through to standard triangulation
+
+        # Standard triangulation (fallback or when EXT_bmesh_encoding is disabled)
         logger.debug("Using standard triangulation for VRM 0.x")
         try:
             bm.calc_loop_triangles()
@@ -3933,6 +3983,133 @@ class Vrm0Exporter(AbstractBaseVrmExporter):
             mesh = parent_mesh
         return True
 
+
+    def add_ext_bmesh_encoding_to_meshes(
+        self,
+        json_dict: dict[str, Json],
+        buffer0: bytearray,
+        extensions_used: list[str],
+        bone_name_to_node_index: Mapping[str, int],
+        mesh_object_name_to_mesh_index: Mapping[str, int],
+    ) -> None:
+        """Add EXT_bmesh_encoding extension data to meshes for VRM 0.x when enabled."""
+        logger.info("Starting EXT_bmesh_encoding addition to VRM 0.x meshes...")
+
+        try:
+            mesh_dicts = json_dict.get("meshes")
+            if not isinstance(mesh_dicts, list):
+                logger.error("No meshes array found in glTF JSON")
+                return
+
+            logger.info(f"Found {len(mesh_dicts)} meshes in glTF JSON")
+            bmesh_encoder = BmeshEncoder()
+
+            # Build object-to-node mapping
+            node_dicts = json_dict.get("nodes", [])
+            object_name_to_node_index: dict[str, int] = {}
+
+            for obj_name, mesh_index in mesh_object_name_to_mesh_index.items():
+                # Find the node that references this mesh
+                for node_idx, node_dict in enumerate(node_dicts):
+                    if isinstance(node_dict, dict):
+                        node_mesh_index = node_dict.get("mesh")
+                        if node_mesh_index == mesh_index:
+                            object_name_to_node_index[obj_name] = node_idx
+                            break
+
+            logger.info(f"Object name to node index mapping: {dict(object_name_to_node_index)}")
+
+            # Process each mesh object that matches the export objects
+            successful_additions = 0
+            for object_name, node_index in object_name_to_node_index.items():
+                logger.info(f"Processing object '{object_name}' at node index {node_index}...")
+
+                obj = self.context.blend_data.objects.get(object_name)
+                if not obj:
+                    logger.warning(f"Object '{object_name}' not found in blend data")
+                    continue
+
+                if obj.type != "MESH":
+                    logger.debug(f"Skipping non-mesh object '{object_name}' (type: {obj.type})")
+                    continue
+
+                logger.info(f"Found mesh object '{object_name}' with data name '{obj.data.name if obj.data else 'NO_DATA'}'")
+
+                # Use BmeshEncoder to process original topology
+                extension_data = bmesh_encoder.encode_object_native(obj)
+                if not extension_data:
+                    logger.warning(f"Failed to encode EXT_bmesh_encoding data for mesh '{object_name}'")
+                    continue
+
+                logger.info(f"Encoded EXT_bmesh_encoding data for '{object_name}' with keys: {list(extension_data.keys())}")
+
+                # Create buffer views and get final extension data
+                logger.info(f"Creating buffer views for '{object_name}'...")
+                final_extension_data = bmesh_encoder.create_buffer_views(json_dict, buffer0, extension_data)
+
+                if not final_extension_data:
+                    logger.error(f"Failed to create buffer views for '{object_name}'")
+                    continue
+
+                logger.info(f"Created buffer views for '{object_name}', final data keys: {list(final_extension_data.keys())}")
+
+                # Find the corresponding mesh in the glTF data
+                mesh_dict = None
+                mesh_name = obj.data.name if obj.data else obj.name
+
+                # Find mesh by name matching
+                for possible_mesh_dict in mesh_dicts:
+                    if isinstance(possible_mesh_dict, dict):
+                        if possible_mesh_dict.get("name") == mesh_name or possible_mesh_dict.get("name") == object_name:
+                            mesh_dict = possible_mesh_dict
+                            break
+
+                if not mesh_dict:
+                    logger.error(f"Could not find corresponding mesh in glTF data for object '{object_name}' (looked for '{mesh_name}' or '{object_name}')")
+                    continue
+
+                actual_mesh_name = mesh_dict.get("name", "unnamed")
+                logger.info(f"Found target mesh '{actual_mesh_name}' for object '{object_name}'")
+
+                if "primitives" not in mesh_dict:
+                    logger.warning(f"Mesh '{actual_mesh_name}' has no primitives array")
+                    continue
+
+                primitives = mesh_dict["primitives"]
+                if not isinstance(primitives, list) or not primitives:
+                    logger.warning(f"Mesh '{actual_mesh_name}' has empty or invalid primitives array")
+                    continue
+
+                logger.info(f"Mesh '{actual_mesh_name}' has {len(primitives)} primitives")
+
+                # Add extension to first primitive
+                primitive = primitives[0]
+                if not isinstance(primitive, dict):
+                    logger.error(f"First primitive of mesh '{actual_mesh_name}' is not a dictionary")
+                    continue
+
+                if "extensions" not in primitive:
+                    primitive["extensions"] = {}
+                    logger.debug(f"Created extensions object for primitive in mesh '{actual_mesh_name}'")
+
+                primitive["extensions"]["EXT_bmesh_encoding"] = final_extension_data
+                logger.info(f"Successfully added EXT_bmesh_encoding to primitive in mesh '{actual_mesh_name}'")
+
+                # Add to extensions used
+                if "EXT_bmesh_encoding" not in extensions_used:
+                    extensions_used.append("EXT_bmesh_encoding")
+                    logger.info("Added EXT_bmesh_encoding to extensionsUsed array")
+
+                successful_additions += 1
+                logger.info(f"Successfully added EXT_bmesh_encoding to mesh '{actual_mesh_name}' for object '{object_name}'")
+
+            logger.info(f"EXT_bmesh_encoding addition to VRM 0.x meshes complete. Successfully added to {successful_additions} meshes.")
+            logger.info(f"Final extensionsUsed array: {extensions_used}")
+
+        except Exception as e:
+            logger.error(f"Failed to add EXT_bmesh_encoding to meshes: {e}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
 
     def get_asset_generator(self) -> str:
         addon_version = get_addon_version()
