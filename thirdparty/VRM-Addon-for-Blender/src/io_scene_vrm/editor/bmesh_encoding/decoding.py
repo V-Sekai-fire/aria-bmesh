@@ -1113,27 +1113,77 @@ class BmeshDecoder:
         return face_map
 
     def _apply_loop_data_from_buffers(self, bm: BMesh, loop_data: Dict[str, Any], vertex_map: Dict[int, BMVert], edge_map: Dict[int, BMEdge], face_map: Dict[int, BMFace], parse_result: Any) -> None:
-        """Apply loop data (UV coordinates, etc.) from buffer data."""
+        """Apply loop data (topology and UV coordinates, etc.) from buffer data."""
         loop_count = loop_data.get("count", 0)
         if loop_count == 0:
             return
 
+        # Check if this is direct encoded data
+        is_direct_data = hasattr(parse_result, 'encoded_data') and parse_result.encoded_data is not None
+
+        # Read topology data from SOA buffers
+        topology_data = {}
+
+        # SOA topology fields
+        topology_fields = [
+            "topology_vertex",
+            "topology_edge",
+            "topology_face",
+            "topology_next",
+            "topology_prev",
+            "topology_radial_next",
+            "topology_radial_prev"
+        ]
+
+        for field_name in topology_fields:
+            attr = loop_data.get(field_name)
+            if attr is not None:
+                if is_direct_data and isinstance(attr, dict) and "data" in attr:
+                    # Direct data - unpack from bytearray
+                    data = attr["data"]
+                    if isinstance(data, (bytes, bytearray)):
+                        topology_data[field_name] = struct.unpack(f"<{loop_count}I", data)
+                        logger.debug(f"Read {len(topology_data[field_name])} {field_name} indices from direct data")
+                elif not is_direct_data and isinstance(attr, int):
+                    # Buffer view index - read from buffer
+                    topology_data[field_name] = self._read_buffer_view(parse_result, attr, 5125, loop_count, "SCALAR")
+                    if topology_data[field_name]:
+                        logger.debug(f"Read {len(topology_data[field_name])} {field_name} indices from buffer view {attr}")
+                    else:
+                        logger.warning(f"Failed to read {field_name} from buffer view {attr}")
+
+        # Apply topology data if available (for validation/comparison, not reconstruction)
+        if len(topology_data) == len(topology_fields):
+            logger.info("Successfully read SOA topology data for validation")
+            # Note: In SOA format, topology is used for validation rather than reconstruction
+            # The actual BMesh reconstruction happens through face/edge/vertex data
+
         # Read UV attributes if present
         attributes = loop_data.get("attributes", {})
         uv_data = {}
-        
+
         for attr_name, buffer_index in attributes.items():
             if attr_name.startswith("TEXCOORD_"):
-                uv_coords = self._read_buffer_view(parse_result, buffer_index, 5126, loop_count, "VEC2")
-                if uv_coords:
-                    uv_data[attr_name] = uv_coords
+                if is_direct_data and isinstance(buffer_index, dict) and "data" in buffer_index:
+                    # Direct data - unpack from bytearray
+                    data = buffer_index["data"]
+                    if isinstance(data, (bytes, bytearray)):
+                        uv_coords = struct.unpack(f"<{loop_count * 2}f", data)
+                        uv_data[attr_name] = uv_coords
+                        logger.debug(f"Read {len(uv_coords)//2} UV coordinates for {attr_name} from direct data")
+                elif not is_direct_data and isinstance(buffer_index, int):
+                    # Buffer view index - read from buffer
+                    uv_coords = self._read_buffer_view(parse_result, buffer_index, 5126, loop_count, "VEC2")
+                    if uv_coords:
+                        uv_data[attr_name] = uv_coords
+                        logger.debug(f"Read {len(uv_coords)//2} UV coordinates for {attr_name} from buffer view {buffer_index}")
 
         # Apply UV data to loops
         if uv_data:
             # Ensure UV layer exists
             if not bm.loops.layers.uv:
                 bm.loops.layers.uv.new()
-            
+
             uv_layer = bm.loops.layers.uv.active
             if uv_layer:
                 loop_index = 0

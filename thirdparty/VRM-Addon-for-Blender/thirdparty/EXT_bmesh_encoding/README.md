@@ -119,12 +119,26 @@ Like FB_ngon_encoding, the **order of triangles and per-triangle vertex indices*
 3. **Triangle Fan Generation**: Create triangle fans with optimal vertex ordering
 4. **Standard glTF Output**: Produce standard glTF triangles following triangle fan pattern
 
+### Buffer-Based Encoding Process (SOA)
+
+1. **BMesh Analysis**: Extract vertices, edges, loops, and faces from BMesh
+2. **SOA Buffer Creation**: Create 7 separate topology buffers for loops
+3. **Variable-Length Encoding**: Encode face vertex/edge/loop arrays with offsets
+4. **Buffer View Assignment**: Assign all data to glTF buffer views
+
 ### Reconstruction Process
 
 1. **Triangle Grouping**: Group consecutive triangles sharing the same `triangle.vertices[0]`
 2. **BMesh Face Rebuilding**: Reconstruct BMesh faces from triangle fans
 3. **Topology Inference**: Infer BMesh edge and loop structure from face connectivity
 4. **Validation**: Validate reconstructed BMesh for topological consistency
+
+### Buffer-Based Reconstruction Process (SOA)
+
+1. **Buffer Reading**: Read SOA topology buffers from glTF buffer views
+2. **BMesh Construction**: Reconstruct vertices, edges, loops, faces from buffers
+3. **Topology Linking**: Restore all navigation pointers and relationships
+4. **Attribute Assignment**: Apply stored attributes to all topology elements
 
 ## Buffer Layouts
 
@@ -148,7 +162,13 @@ All BMesh topology data is stored in glTF buffers using efficient binary layouts
 
 ### Loop Buffers
 
-- **topology**: `[u32; 7]` (28 bytes per loop) - vertex, edge, face, next, prev, radial_next, radial_prev indices
+- **topology_vertex**: `u32` (4 bytes per loop) - vertex indices
+- **topology_edge**: `u32` (4 bytes per loop) - edge indices
+- **topology_face**: `u32` (4 bytes per loop) - face indices
+- **topology_next**: `u32` (4 bytes per loop) - next loop indices
+- **topology_prev**: `u32` (4 bytes per loop) - prev loop indices
+- **topology_radial_next**: `u32` (4 bytes per loop) - radial_next loop indices
+- **topology_radial_prev**: `u32` (4 bytes per loop) - radial_prev loop indices
 - **attributes**: glTF 2.0 compliant attributes (TEXCOORD_0, COLOR_0, etc.)
 
 ### Face Buffers
@@ -248,6 +268,8 @@ function encodeBmeshImplicit(bmeshFaces) {
   return triangles;
 }
 
+// The encoding is the function inverse of decodeBmeshFromBuffers.
+
 // Buffer-based BMesh reconstruction
 function decodeBmeshFromBuffers(gltfData) {
   const bmesh = {
@@ -300,19 +322,25 @@ function decodeBmeshFromBuffers(gltfData) {
     bmesh.edges.set(i, edge);
   }
 
-  // Reconstruct loops from buffer data
-  const loopTopology = readBufferView(buffers, bufferViews, ext.loops.topology);
+  // Reconstruct loops from SOA buffer data
+  const loopVertex = readBufferView(buffers, bufferViews, ext.loops.topology_vertex);
+  const loopEdge = readBufferView(buffers, bufferViews, ext.loops.topology_edge);
+  const loopFace = readBufferView(buffers, bufferViews, ext.loops.topology_face);
+  const loopNext = readBufferView(buffers, bufferViews, ext.loops.topology_next);
+  const loopPrev = readBufferView(buffers, bufferViews, ext.loops.topology_prev);
+  const loopRadialNext = readBufferView(buffers, bufferViews, ext.loops.topology_radial_next);
+  const loopRadialPrev = readBufferView(buffers, bufferViews, ext.loops.topology_radial_prev);
 
   for (let i = 0; i < ext.loops.count; i++) {
     bmesh.loops.set(i, {
       id: i,
-      vertex: loopTopology[i * 7],
-      edge: loopTopology[i * 7 + 1],
-      face: loopTopology[i * 7 + 2],
-      next: loopTopology[i * 7 + 3],
-      prev: loopTopology[i * 7 + 4],
-      radial_next: loopTopology[i * 7 + 5],
-      radial_prev: loopTopology[i * 7 + 6],
+      vertex: loopVertex[i],
+      edge: loopEdge[i],
+      face: loopFace[i],
+      next: loopNext[i],
+      prev: loopPrev[i],
+      radial_next: loopRadialNext[i],
+      radial_prev: loopRadialPrev[i],
       attributes: {},
     });
   }

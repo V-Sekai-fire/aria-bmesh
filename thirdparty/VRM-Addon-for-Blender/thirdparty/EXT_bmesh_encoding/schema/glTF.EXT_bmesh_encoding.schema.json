@@ -75,16 +75,40 @@
         },
         "loops": {
             "type": "object",
-            "description": "Buffer-based loop data",
+            "description": "Buffer-based loop data with SOA topology",
             "properties": {
                 "count": {
                     "type": "integer",
                     "minimum": 0,
                     "description": "Number of loops"
                 },
-                "topology": {
+                "topology_vertex": {
                     "allOf": [{"$ref": "glTFid.schema.json"}],
-                    "description": "Buffer view containing loop topology (vertex, edge, face, next, prev, radial_next, radial_prev as 7×u32 per loop)"
+                    "description": "Buffer view containing loop vertex indices (u32 per loop)"
+                },
+                "topology_edge": {
+                    "allOf": [{"$ref": "glTFid.schema.json"}],
+                    "description": "Buffer view containing loop edge indices (u32 per loop)"
+                },
+                "topology_face": {
+                    "allOf": [{"$ref": "glTFid.schema.json"}],
+                    "description": "Buffer view containing loop face indices (u32 per loop)"
+                },
+                "topology_next": {
+                    "allOf": [{"$ref": "glTFid.schema.json"}],
+                    "description": "Buffer view containing loop next indices (u32 per loop)"
+                },
+                "topology_prev": {
+                    "allOf": [{"$ref": "glTFid.schema.json"}],
+                    "description": "Buffer view containing loop prev indices (u32 per loop)"
+                },
+                "topology_radial_next": {
+                    "allOf": [{"$ref": "glTFid.schema.json"}],
+                    "description": "Buffer view containing loop radial_next indices (u32 per loop)"
+                },
+                "topology_radial_prev": {
+                    "allOf": [{"$ref": "glTFid.schema.json"}],
+                    "description": "Buffer view containing loop radial_prev indices (u32 per loop)"
                 },
                 "attributes": {
                     "type": "object",
@@ -96,7 +120,7 @@
                     }
                 }
             },
-            "required": ["count", "topology"]
+            "required": ["count", "topology_vertex", "topology_edge", "topology_face", "topology_next", "topology_prev", "topology_radial_next", "topology_radial_prev"]
         },
         "faces": {
             "type": "object",

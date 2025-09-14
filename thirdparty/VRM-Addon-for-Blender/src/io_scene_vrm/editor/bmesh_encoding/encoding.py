@@ -339,7 +339,7 @@ class BmeshEncoder:
         return result
 
     def _encode_loops_to_buffers_direct(self, bm: BMesh, vert_to_index: Dict, edge_to_index: Dict, face_to_index: Dict, loop_to_index: Dict) -> Dict[str, Any]:
-        """Encode loop data using manual index maps to avoid lookup table issues."""
+        """Encode loop data using SOA format with manual index maps to avoid lookup table issues."""
         if not any(f.loops for f in bm.faces):
              return {}
 
@@ -348,14 +348,21 @@ class BmeshEncoder:
         if loop_count == 0:
             return {}
 
-        # Create topology data (vertex, edge, face, next, prev, radial_next, radial_prev)
-        topology_buffer = bytearray()
-        topology_struct = struct.Struct("<IIIIIII")  # 7×u32 per loop
-        
+        # Create separate SOA buffers for each topology field
+        vertex_buffer = bytearray()
+        edge_buffer = bytearray()
+        face_buffer = bytearray()
+        next_buffer = bytearray()
+        prev_buffer = bytearray()
+        radial_next_buffer = bytearray()
+        radial_prev_buffer = bytearray()
+
+        index_struct = struct.Struct("<I")  # u32 per loop for each field
+
         # Create UV data using glTF standard attribute names
         uv_buffers = {}
         uv_struct = struct.Struct("<ff")
-        
+
         # Check for UV layers
         if bm.loops.layers.uv:
             for i, uv_layer in enumerate(bm.loops.layers.uv):
@@ -363,47 +370,45 @@ class BmeshEncoder:
 
         # Create reverse loop index mapping for navigation
         index_to_loop = {idx: loop for loop, idx in loop_to_index.items()}
-        
+
         # Process loops in index order
         for loop_idx in range(loop_count):
             loop = index_to_loop.get(loop_idx)
             if loop is None:
                 continue
-                
+
             face = loop.face
             face_loops = list(face.loops)
             loop_in_face_idx = face_loops.index(loop)
-            
+
             # Calculate next and previous in face using manual mapping
             next_in_face = (loop_in_face_idx + 1) % len(face_loops)
             prev_in_face = (loop_in_face_idx - 1) % len(face_loops)
             next_loop = face_loops[next_in_face]
             prev_loop = face_loops[prev_in_face]
-            
+
             next_idx = loop_to_index.get(next_loop, loop_idx)
             prev_idx = loop_to_index.get(prev_loop, loop_idx)
-            
+
             # Find radial navigation using manual index mapping
             radial_next_idx, radial_prev_idx = self._find_radial_loop_indices_direct(
                 loop, loop_idx, loop_to_index, face_to_index
             )
-            
+
             # Get indices using manual mapping
             vert_idx = vert_to_index.get(loop.vert, 0)
             edge_idx = edge_to_index.get(loop.edge, 0)
             face_idx = face_to_index.get(loop.face, 0)
-            
-            # Pack topology
-            topology_buffer.extend(topology_struct.pack(
-                vert_idx,           # vertex
-                edge_idx,           # edge  
-                face_idx,           # face
-                next_idx,           # next
-                prev_idx,           # prev
-                radial_next_idx,    # radial_next
-                radial_prev_idx     # radial_prev
-            ))
-            
+
+            # Pack each topology field separately (SOA format)
+            vertex_buffer.extend(index_struct.pack(vert_idx))
+            edge_buffer.extend(index_struct.pack(edge_idx))
+            face_buffer.extend(index_struct.pack(face_idx))
+            next_buffer.extend(index_struct.pack(next_idx))
+            prev_buffer.extend(index_struct.pack(prev_idx))
+            radial_next_buffer.extend(index_struct.pack(radial_next_idx))
+            radial_prev_buffer.extend(index_struct.pack(radial_prev_idx))
+
             # Pack UV coordinates using glTF standard naming
             if bm.loops.layers.uv:
                 for uv_i, uv_layer in enumerate(bm.loops.layers.uv):
@@ -412,15 +417,57 @@ class BmeshEncoder:
 
         result = {
             "count": loop_count,
-            "topology": {
-                "data": topology_buffer,
+            "topology_vertex": {
+                "data": vertex_buffer,
                 "target": 34962,  # GL_ARRAY_BUFFER
                 "componentType": 5125,  # GL_UNSIGNED_INT
-                "type": "SCALAR",  # 7 components per loop stored as scalars
-                "count": loop_count * 7  # 7 values per loop
+                "type": "SCALAR",
+                "count": loop_count
+            },
+            "topology_edge": {
+                "data": edge_buffer,
+                "target": 34962,  # GL_ARRAY_BUFFER
+                "componentType": 5125,  # GL_UNSIGNED_INT
+                "type": "SCALAR",
+                "count": loop_count
+            },
+            "topology_face": {
+                "data": face_buffer,
+                "target": 34962,  # GL_ARRAY_BUFFER
+                "componentType": 5125,  # GL_UNSIGNED_INT
+                "type": "SCALAR",
+                "count": loop_count
+            },
+            "topology_next": {
+                "data": next_buffer,
+                "target": 34962,  # GL_ARRAY_BUFFER
+                "componentType": 5125,  # GL_UNSIGNED_INT
+                "type": "SCALAR",
+                "count": loop_count
+            },
+            "topology_prev": {
+                "data": prev_buffer,
+                "target": 34962,  # GL_ARRAY_BUFFER
+                "componentType": 5125,  # GL_UNSIGNED_INT
+                "type": "SCALAR",
+                "count": loop_count
+            },
+            "topology_radial_next": {
+                "data": radial_next_buffer,
+                "target": 34962,  # GL_ARRAY_BUFFER
+                "componentType": 5125,  # GL_UNSIGNED_INT
+                "type": "SCALAR",
+                "count": loop_count
+            },
+            "topology_radial_prev": {
+                "data": radial_prev_buffer,
+                "target": 34962,  # GL_ARRAY_BUFFER
+                "componentType": 5125,  # GL_UNSIGNED_INT
+                "type": "SCALAR",
+                "count": loop_count
             }
         }
-        
+
         # Add UV attributes if present
         if uv_buffers:
             result["attributes"] = {}
