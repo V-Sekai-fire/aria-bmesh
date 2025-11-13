@@ -1,180 +1,97 @@
-# AriaBmeshDomain
+# AriaBmesh
 
-Procedural mesh generation domain for AriaHybridPlanner, enabling spatial and geometric reasoning within temporal planning frameworks.
+Topological mesh data structures for n-gon geometry in Elixir.
 
 ## Overview
 
-AriaBmeshDomain provides a planning domain that treats procedural mesh generation as a first-class planning concern. It integrates with AriaHybridPlanner to enable sophisticated 3D content creation through temporal planning actions, goals, and task decomposition.
+AriaBmesh provides a complete BMesh implementation for representing 3D meshes with support for:
+- **N-gon faces**: Triangles, quads, and polygons with any number of vertices
+- **Non-manifold geometry**: Edges can connect multiple faces
+- **Topological navigation**: Efficient traversal of mesh connectivity
+- **Per-corner attributes**: UV coordinates, colors, and other attributes stored on face corners (loops)
 
 ## Features
 
-- **Durative Actions**: Mesh generation operations with realistic time estimates
-- **Spatial Reasoning**: Topology and geometry as planning predicates
-- **Goal Achievement**: Automated mesh creation and modification to satisfy spatial goals
-- **Task Decomposition**: Complex mesh generation workflows broken into manageable steps
-- **Entity Management**: Resource allocation for mesh generation capabilities
+- **Vertices**: 3D positions with edge connections and attributes
+- **Edges**: Connect two vertices, support multiple faces (non-manifold)
+- **Loops**: Face corners with navigation pointers for boundary and radial traversal
+- **Faces**: N-gon polygons with vertices, edges, loops, and attributes
+- **Topology**: Navigation functions for traversing mesh connectivity
 
-## Core Components
+## Installation
 
-### Planning Actions
+Add `aria_bmesh` to your list of dependencies in `mix.exs`:
 
-- `create_mesh/2` - Generate new mesh with specified parameters
-- `modify_topology/2` - Add/remove vertices, edges, faces
-- `setup_mesh_scenario/2` - Initialize mesh generation entities
-
-### Goal Achievement Methods
-
-- `achieve_mesh_existence/2` - Ensure mesh creation goals
-- `achieve_vertex_count/2` - Achieve target vertex count goals
-
-### Task Decomposition Methods
-
-- `generate_procedural_mesh/2` - Decompose complex mesh generation workflows
-
-## Geometric Primitives
-
-The domain supports comprehensive geometric primitive generation for testing and development:
-
-### Supported Primitives
-
-- **Cubic Strokes**: Volumetric brush-like meshes
-- **Cylinders**: Circular cross-section extrusions
-- **Cones**: Tapered circular meshes
-- **Cuboids**: Rectangular box primitives
-- **Ellipsoids**: Stretched spherical meshes
-- **Triangular Prisms**: Triangular cross-section extrusions
-- **Donuts (Tori)**: Ring-shaped meshes with holes
-- **Biscuits**: Rounded cylindrical shapes
-- **Markoids**: Super ellipsoids with variable power for x,y,z axes
-- **Pyramids**: Pointed apex meshes
-
-### Complexity Categories
-
-- **Low Complexity**: Cuboids, triangular prisms, pyramids
-- **Medium Complexity**: Cylinders, cones, cubic strokes, biscuits
-- **High Complexity**: Ellipsoids, donuts, markoids
+```elixir
+def deps do
+  [
+    {:aria_bmesh, git: "https://github.com/V-Sekai-fire/aria-bmesh.git"}
+  ]
+end
+```
 
 ## Usage
 
-### Basic Domain Creation
+### Creating a Mesh
 
 ```elixir
-# Create the domain
-domain = AriaBmeshDomain.create()
+# Create an empty mesh
+mesh = AriaBmesh.Mesh.new()
 
-# Initialize state
-state = AriaState.new()
+# Add vertices
+{mesh, v1} = AriaBmesh.Mesh.add_vertex(mesh, {0.0, 0.0, 0.0})
+{mesh, v2} = AriaBmesh.Mesh.add_vertex(mesh, {1.0, 0.0, 0.0})
+{mesh, v3} = AriaBmesh.Mesh.add_vertex(mesh, {0.0, 1.0, 0.0})
 
-# Set up mesh generation scenario
-{:ok, state} = AriaBmeshDomain.setup_mesh_scenario(state, [])
+# Add edges
+{mesh, e1} = AriaBmesh.Mesh.add_edge(mesh, {v1, v2})
+{mesh, e2} = AriaBmesh.Mesh.add_edge(mesh, {v2, v3})
+{mesh, e3} = AriaBmesh.Mesh.add_edge(mesh, {v3, v1})
+
+# Add a face (triangle)
+{mesh, face_id} = AriaBmesh.Mesh.add_face(mesh, [v1, v2, v3])
 ```
 
-### Mesh Generation
+### Working with Attributes
 
 ```elixir
-# Create a simple cuboid
-params = AriaBmeshDomain.Primitives.cuboid_params()
-{:ok, state} = AriaBmeshDomain.create_mesh(state, ["my_cuboid", params])
+# Add vertex attributes
+vertex = AriaBmesh.Vertex.new(0, {1.0, 2.0, 3.0})
+vertex = AriaBmesh.Vertex.set_attribute(vertex, "NORMAL", {0.0, 1.0, 0.0})
 
-# Create a high-resolution cylinder
-params = AriaBmeshDomain.Primitives.cylinder_params(
-  radial_segments: 32,
-  vertex_count: 96
-)
-{:ok, state} = AriaBmeshDomain.create_mesh(state, ["detailed_cylinder", params])
+# Add loop attributes (per-corner UVs)
+loop = AriaBmesh.Loop.new(0, vertex_id, edge_id, face_id)
+loop = AriaBmesh.Loop.set_attribute(loop, "TEXCOORD_0", {0.5, 0.5})
 ```
 
-### Mesh Modification
+### Topological Navigation
 
 ```elixir
-# Add vertices and faces to existing mesh
-operations = %{add_vertices: 8, add_faces: 4}
-{:ok, state} = AriaBmeshDomain.modify_topology(state, ["my_cuboid", operations])
+# Get all faces sharing an edge (non-manifold support)
+edge = AriaBmesh.Mesh.get_edge(mesh, edge_id)
+faces = AriaBmesh.Topology.edge_faces(mesh, edge)
+
+# Get all loops in a face boundary (in order)
+face = AriaBmesh.Mesh.get_face(mesh, face_id)
+loops = AriaBmesh.Topology.face_loops(mesh, face)
+
+# Check if edge is manifold
+is_manifold = AriaBmesh.Topology.edge_manifold?(mesh, edge)
 ```
 
-### Goal-Driven Planning
+## Core Modules
 
-```elixir
-# Ensure a mesh exists
-{:ok, actions} = AriaBmeshDomain.achieve_mesh_existence(state, {"target_mesh", true})
+- `AriaBmesh.Mesh` - Container for vertices, edges, loops, and faces
+- `AriaBmesh.Vertex` - Vertex structure with position and attributes
+- `AriaBmesh.Edge` - Edge structure connecting two vertices
+- `AriaBmesh.Loop` - Face corner with navigation pointers
+- `AriaBmesh.Face` - N-gon face structure
+- `AriaBmesh.Topology` - Topological navigation functions
 
-# Achieve specific vertex count
-{:ok, actions} = AriaBmeshDomain.achieve_vertex_count(state, {"target_mesh", 100})
-```
+## Requirements
 
-### Complex Mesh Generation
-
-```elixir
-# Generate procedural mesh with task decomposition
-{:ok, actions} = AriaBmeshDomain.generate_procedural_mesh(
-  state, 
-  ["complex_mesh", :high, :sphere]
-)
-```
-
-## Integration with AriaHybridPlanner
-
-AriaBmeshDomain integrates seamlessly with the AriaHybridPlanner framework:
-
-- Uses `@action` attributes for durative actions
-- Implements `@unigoal_method` for goal achievement
-- Provides `@task_method` for workflow decomposition
-- Manages state through AriaState fact storage
-- Supports entity-based resource allocation
-
-## Testing
-
-The domain includes comprehensive test coverage for all geometric primitives and planning operations:
-
-```bash
-# Run tests
-mix test
-
-# Run specific test group
-mix test --only geometric_primitives
-```
-
-## Dependencies
-
-- `aria_hybrid_planner` - Core planning framework
-- `aria_core` - Domain management and action attributes
-- `aria_state` - State management and fact storage
-
-## Architecture
-
-The domain follows standard Elixir umbrella app patterns:
-
-```
-apps/aria_bmesh_domain/
-├── lib/
-│   ├── aria_bmesh_domain.ex          # Main domain module
-│   └── aria_bmesh_domain/
-│       └── primitives.ex             # Geometric primitive generation
-├── test/
-│   └── aria_bmesh_domain_test.exs    # Comprehensive test suite
-└── mix.exs                           # Project configuration
-```
-
-## Future Extensions
-
-Potential areas for expansion:
-
-- **Unity Integration**: Direct communication with Unity mesh systems
-- **Advanced Spatial Reasoning**: Collision detection and spatial relationships
-- **Mesh Optimization**: Automatic mesh simplification and quality improvement
-- **Material Planning**: Texture and material assignment through planning
-- **Animation Planning**: Temporal mesh deformation and animation sequences
-
-## Contributing
-
-When adding new geometric primitives or planning operations:
-
-1. Add primitive generation functions to `AriaBmeshDomain.Primitives`
-2. Include comprehensive test coverage
-3. Update complexity categorization
-4. Document usage patterns and examples
-5. Ensure integration with existing planning framework
+- Elixir ~> 1.18
 
 ## License
 
-This project follows the same license as the parent aria-character-core project.
+MIT

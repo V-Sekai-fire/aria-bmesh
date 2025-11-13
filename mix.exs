@@ -1,31 +1,36 @@
-defmodule AriaBmeshDomain.MixProject do
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2025-present K. S. Ernest (iFire) Lee
+
+defmodule AriaBmesh.MixProject do
   use Mix.Project
 
   def project do
     [
-      app: :aria_bmesh_domain,
+      app: :aria_bmesh,
       version: "0.1.0",
-      elixir: "~> 1.17",
+      elixir: "~> 1.18",
       start_permanent: Mix.env() == :prod,
-      deps: deps()
+      deps: deps(),
+      description: "ARIA BMesh - Topological mesh data structures for n-gon geometry",
+      package: package()
     ]
   end
 
-  # Run "mix help compile.app" to learn about applications.
   def application do
     [
-      extra_applications: [:logger],
-      mod: {AriaBmeshDomain.Application, []}
+      extra_applications: [:logger]
     ]
   end
 
-  # Run "mix help deps" to learn about dependencies.
   defp deps do
+    []
+  end
+
+  defp package do
     [
-      {:aria_hybrid_planner, git: "https://github.com/V-Sekai-fire/aria-hybrid-planner.git"},
-      {:aria_gltf, git: "https://github.com/V-Sekai-fire/aria-character-core.git", sparse: "apps/aria_gltf"},
-      {:aria_joint, git: "https://github.com/V-Sekai-fire/aria-character-core.git", sparse: "apps/aria_joint", override: true},
-      {:aria_math, git: "https://github.com/V-Sekai-fire/aria-math.git"}
+      maintainers: ["K. S. Ernest (iFire) Lee"],
+      licenses: ["MIT"],
+      links: %{"GitHub" => "https://github.com/V-Sekai-fire/aria-bmesh"}
     ]
   end
 end
