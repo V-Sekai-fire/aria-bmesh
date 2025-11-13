@@ -104,7 +104,7 @@ defmodule AriaBmesh.Topology do
         []
 
       [first_loop_id | _] ->
-        traverse_loop_ring(mesh, first_loop_id, [])
+        traverse_loop_ring(mesh, first_loop_id, MapSet.new())
     end
   end
 
@@ -172,17 +172,31 @@ defmodule AriaBmesh.Topology do
   end
 
   # Private helper: Traverse loop ring using next pointers
-  defp traverse_loop_ring(%Mesh{} = mesh, loop_id, visited) do
-    if loop_id in visited do
-      Enum.reverse(visited)
+  # Uses tombstones (visited set) to prevent infinite loops
+  defp traverse_loop_ring(%Mesh{} = mesh, loop_id, visited_ids) when is_nil(loop_id) do
+    # Reached end of chain, return empty list
+    []
+  end
+
+  defp traverse_loop_ring(%Mesh{} = mesh, loop_id, visited_ids) do
+    # Check tombstone: if we've already visited this loop, stop to prevent infinite loop
+    if MapSet.member?(visited_ids, loop_id) do
+      # Cycle detected, return empty list to break the loop
+      []
     else
       case Mesh.get_loop(mesh, loop_id) do
         nil ->
-          Enum.reverse(visited)
+          # Loop doesn't exist, stop traversal
+          []
 
         loop ->
+          # Mark this loop as visited (tombstone)
+          visited_set = MapSet.put(visited_ids, loop_id)
           next_id = loop.next
-          traverse_loop_ring(mesh, next_id, [loop | visited])
+
+          # Continue traversal with updated tombstone set
+          rest = traverse_loop_ring(mesh, next_id, visited_set)
+          [loop | rest]
       end
     end
   end
